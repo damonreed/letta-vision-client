@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, List, Literal, Union
 
 from pydantic import BaseModel, Field
 
@@ -29,8 +29,27 @@ class UpdateAgentRequest(BaseModel):
     per_file_view_window_char_limit: int | None = None
 
 
+class ImageSourceBlock(BaseModel):
+    type: Literal["base64"] = "base64"
+    media_type: str
+    data: str
+
+
+class TextContentBlock(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ImageContentBlock(BaseModel):
+    type: Literal["image"] = "image"
+    source: ImageSourceBlock
+
+
+ContentBlock = Union[TextContentBlock, ImageContentBlock]
+
+
 class SendMessageRequest(BaseModel):
-    content: str
+    content: Union[str, List[ContentBlock]]
 
 
 class UpdateBlockRequest(BaseModel):

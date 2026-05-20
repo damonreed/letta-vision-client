@@ -1,7 +1,9 @@
+import json
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from backend.config import get_letta_client
+from backend.config import get_letta_client, get_settings
 from backend.letta_lists import collect_sync_page
 from backend.schemas import SendMessageRequest, serialize
 from backend.sse import stream_events
@@ -34,12 +36,21 @@ def send_message(
     body: SendMessageRequest,
     conversation_id: str | None = Query(None),
 ):
+    settings = get_settings()
+    payload = body.model_dump(mode="json")
+    body_size = len(json.dumps(payload).encode("utf-8"))
+    if body_size > settings.vision_max_request_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": f"Request body exceeds maximum size of {settings.vision_max_request_bytes} bytes."},
+        )
+
     client = get_letta_client()
     conv = _conv_id(conversation_id)
     try:
         kwargs = {
             "streaming": True,
-            "input": body.content,
+            "input": payload["content"],
             "include_pings": True,
             "stream_tokens": True,
         }

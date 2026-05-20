@@ -5,6 +5,16 @@ export const selectedAgentId = writable(null);
 export const currentTab = writable("agents");
 export const conversations = writable([]);
 export const activeConversationId = writable(null);
+export const modelsCache = writable([]);
+
+/** @param {string} modelHandle */
+export function modelSupportsVision(modelHandle, models) {
+  if (!modelHandle || !models?.length) return false;
+  const m = models.find(
+    (x) => x.handle === modelHandle || x.name === modelHandle || x.model === modelHandle
+  );
+  return Boolean(m?.supports_vision);
+}
 
 export const DEFAULT_CONVERSATION_ID = "default";
 

@@ -5,6 +5,14 @@
   import { api } from "../lib/api.js";
   import { messageListKey, sortMessagesChronological, withUniqueMessageIds } from "../lib/messages.js";
   import { buildDisplayGroups } from "../lib/chatDisplay.js";
+  import { parseContent, imageSrcFromBlock, previewSrcForAttachment } from "../lib/contentBlocks.js";
+  import {
+    buildMessageContent,
+    fileToImageBlock,
+    fetchUrlToImageBlock,
+  } from "../lib/imagePipeline.ts";
+  import AttachmentThumbnail from "../lib/components/AttachmentThumbnail.svelte";
+  import ImageViewer from "../lib/components/ImageViewer.svelte";
   import ConversationList from "../lib/ConversationList.svelte";
   import {
     activeConversationId,
@@ -15,6 +23,8 @@
     saveChatDraft,
     saveSelectedAgent,
     selectedAgentId,
+    modelsCache,
+    modelSupportsVision,
   } from "../lib/stores.js";
 
   let agentList = $state([]);
@@ -36,6 +46,19 @@
   /** @type {{ abort: AbortController, agentId: string, conversationId: string, streamId: number } | null} */
   let activeStream = null;
   let streamIdCounter = 0;
+  let pendingAttachment = $state(null);
+  let modelsList = $state([]);
+  let showUrlAttach = $state(false);
+  let urlAttachInput = $state("");
+  let dropOverlay = $state(false);
+  let viewerSrc = $state(null);
+  let viewerOpen = $state(false);
+  let fileInput = $state(null);
+
+  const activeAgent = $derived(agentList.find((a) => a.id === agentId));
+  const visionCapable = $derived(
+    modelSupportsVision(activeAgent?.model, modelsList)
+  );
 
   const SCROLL_BOTTOM_THRESHOLD = 64;
 
@@ -123,7 +146,9 @@
 
   async function loadAgents() {
     try {
-      const a = await api.listAgents();
+      const [a, models] = await Promise.all([api.listAgents(), api.listModels()]);
+      modelsList = Array.isArray(models) ? models : [];
+      modelsCache.set(modelsList);
       agents.set(a);
       if (!agentId && a.length) {
         const saved = loadSelectedAgent();
@@ -216,20 +241,31 @@
     else if (type === "system_message") role = "system";
 
     let content = "";
+    let contentBlocks = null;
     if (m.content != null) {
-      content =
-        typeof m.content === "string"
-          ? m.content
-          : JSON.stringify(m.content, null, 2);
+      if (typeof m.content === "string") {
+        content = m.content;
+      } else if (Array.isArray(m.content)) {
+        const parsed = parseContent(m.content);
+        content = parsed.text;
+        contentBlocks = m.content;
+      } else {
+        content = JSON.stringify(m.content, null, 2);
+      }
     } else if (m.reasoning) {
       content = m.reasoning;
     } else if (m.tool_call) {
       content = JSON.stringify(m.tool_call, null, 2);
     } else if (m.tool_return != null) {
-      content =
-        typeof m.tool_return === "string"
-          ? m.tool_return
-          : JSON.stringify(m.tool_return, null, 2);
+      if (typeof m.tool_return === "string") {
+        content = m.tool_return;
+      } else if (Array.isArray(m.tool_return)) {
+        const parsed = parseContent(m.tool_return);
+        content = parsed.text;
+        contentBlocks = m.tool_return;
+      } else {
+        content = JSON.stringify(m.tool_return, null, 2);
+      }
     }
 
     const id = m.id || crypto.randomUUID();
@@ -240,6 +276,7 @@
       role,
       type,
       content,
+      contentBlocks,
       date: m.date,
       seq_id: m.seq_id ?? null,
       collapsed: ["tool_call", "tool_result"].includes(role) || systemCollapsed,
@@ -281,9 +318,92 @@
     );
   }
 
+
+  function openViewer(src) {
+    viewerSrc = src;
+    viewerOpen = true;
+  }
+
+  async function attachFile(file) {
+    if (!file || !file.type.startsWith("image/")) {
+      error = "Only image files can be attached.";
+      return;
+    }
+    error = "";
+    try {
+      pendingAttachment = await fileToImageBlock(file);
+    } catch (err) {
+      error = err.message;
+    }
+  }
+
+  function onFilePick(e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) attachFile(file);
+  }
+
+  function onDragOver(e) {
+    e.preventDefault();
+    dropOverlay = true;
+  }
+
+  function onDragLeave() {
+    dropOverlay = false;
+  }
+
+  async function onDrop(e) {
+    e.preventDefault();
+    dropOverlay = false;
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      error = "Only image files can be attached.";
+      return;
+    }
+    await attachFile(file);
+  }
+
+  async function onPaste(e) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) await attachFile(file);
+        return;
+      }
+    }
+  }
+
+  async function attachFromUrl() {
+    const url = urlAttachInput.trim();
+    if (!url) return;
+    error = "";
+    try {
+      pendingAttachment = await fetchUrlToImageBlock(url);
+      showUrlAttach = false;
+      urlAttachInput = "";
+    } catch (err) {
+      error = err.message.includes("fetch")
+        ? err.message
+        : `Could not attach image: ${err.message}`;
+    }
+  }
+
+  function clearAttachment() {
+    pendingAttachment = null;
+  }
+
   async function send() {
     const text = input.trim();
-    if (!text || !agentId || streaming) return;
+    const attachment = pendingAttachment;
+    if ((!text && !attachment) || !agentId || streaming) return;
+    if (attachment && !visionCapable) {
+      error = "This agent's model can't see images. Switch to a vision-capable agent.";
+      return;
+    }
 
     const streamAgentId = agentId;
     const streamConversationId = conversationId;
@@ -302,14 +422,17 @@
     stickToBottom = true;
     error = "";
 
+    const outgoing = buildMessageContent(text, attachment);
     const userMsg = {
       id: `local-${Date.now()}`,
       role: "user",
       type: "user_message",
-      content: text,
+      content: typeof outgoing === "string" ? outgoing : text || "",
+      contentBlocks: Array.isArray(outgoing) ? outgoing : null,
       date: new Date().toISOString(),
       collapsed: false,
     };
+    pendingAttachment = null;
     messages = withUniqueMessageIds([...messages, userMsg]);
     await scrollToBottom();
 
@@ -320,7 +443,7 @@
     try {
       for await (const event of api.streamMessage(
         streamAgentId,
-        text,
+        outgoing,
         streamConversationId,
         { signal: abort.signal }
       )) {
@@ -444,8 +567,9 @@
   {#if error}<p class="error">{error}</p>{/if}
 
   <div class="chat-body">
+    {#if dropOverlay}<div class="drop-overlay">Drop image to attach</div>{/if}
     <ConversationList agentId={agentId} />
-    <div class="messages" bind:this={listEl} onscroll={onMessagesScroll}>
+    <div class="messages" bind:this={listEl} onscroll={onMessagesScroll} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
       {#each displayGroups as group (group.key)}
         {#if group.type === "user" || group.type === "single"}
           {#each group.messages as msg, i (messageListKey(msg, i))}
@@ -491,15 +615,42 @@
   </div>
 
   <footer class="input-area">
-    <textarea
-      bind:value={input}
-      onkeydown={onKeydown}
-      placeholder="Message… (Cmd+Enter to send)"
-      rows="2"
-      disabled={streaming}
-    ></textarea>
-    <button onclick={send} disabled={streaming || !input.trim()}>Send</button>
+    <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden bind:this={fileInput} onchange={onFilePick} />
+    {#if pendingAttachment}
+      <AttachmentThumbnail
+        src={previewSrcForAttachment(pendingAttachment)}
+        onRemove={clearAttachment}
+        onView={() => openViewer(previewSrcForAttachment(pendingAttachment))}
+      />
+    {/if}
+    {#if showUrlAttach}
+      <div class="url-attach">
+        <input type="url" bind:value={urlAttachInput} placeholder="Image URL" />
+        <button type="button" onclick={attachFromUrl}>Fetch</button>
+        <button type="button" class="ghost" onclick={() => (showUrlAttach = false)}>Cancel</button>
+      </div>
+    {/if}
+    <div class="composer-row">
+      <button
+        type="button"
+        class="attach-btn"
+        title={visionCapable ? "Attach image" : "This agent's model can't see images. Switch to a vision-capable agent."}
+        disabled={streaming || !visionCapable}
+        onclick={() => fileInput?.click()}
+      >📎</button>
+      <button type="button" class="attach-btn" disabled={streaming || !visionCapable} onclick={() => (showUrlAttach = !showUrlAttach)}>URL</button>
+      <textarea
+        bind:value={input}
+        onkeydown={onKeydown}
+        onpaste={onPaste}
+        placeholder="Message… (Cmd+Enter to send)"
+        rows="2"
+        disabled={streaming}
+      ></textarea>
+      <button onclick={send} disabled={streaming || (!input.trim() && !pendingAttachment)}>Send</button>
+    </div>
   </footer>
+  <ImageViewer src={viewerSrc} bind:open={viewerOpen} />
 </div>
 
 {#snippet messageArticle(msg)}
@@ -528,10 +679,41 @@
     {:else if msg.role === "tool_call" || msg.role === "tool_result"}
       <details open={!msg.collapsed}>
         <summary>{msg.role === "tool_call" ? "Tool call" : "Tool result"}</summary>
-        <pre class="wrap">{msg.content}</pre>
+        {#if msg.contentBlocks?.length}
+          <div class="content blocks">
+            {#if msg.content}
+              <pre class="wrap">{msg.content}</pre>
+            {/if}
+            {#each msg.contentBlocks.filter((b) => b.type === "image") as img, i (i)}
+              {@const src = imageSrcFromBlock(img)}
+              {#if src}
+                <button type="button" class="img-btn" onclick={() => openViewer(src)}>
+                  <img src={src} alt="Tool result image" loading="lazy" decoding="async" referrerpolicy="no-referrer" class="inline-img" />
+                </button>
+              {/if}
+            {/each}
+          </div>
+        {:else}
+          <pre class="wrap">{msg.content}</pre>
+        {/if}
       </details>
     {:else if msg.role === "agent"}
       <div class="content md">{@html renderMarkdown(msg.content)}</div>
+    {:else if msg.contentBlocks?.length}
+      <div class="content blocks">
+        {#if msg.content}
+          <pre class="wrap">{msg.content}</pre>
+        {/if}
+        {#each msg.contentBlocks.filter((b) => b.type === "image") as img, i (i)}
+          {@const src = imageSrcFromBlock(img)}
+          {#if src}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <button type="button" class="img-btn" onclick={() => openViewer(src)}>
+              <img src={src} alt="Message image" loading="lazy" decoding="async" referrerpolicy="no-referrer" class="inline-img" />
+            </button>
+          {/if}
+        {/each}
+      </div>
     {:else}
       <div class="content"><pre class="wrap">{msg.content}</pre></div>
     {/if}
@@ -568,6 +750,7 @@
     display: flex;
     overflow: hidden;
     min-height: 0;
+    position: relative;
   }
   .messages {
     flex: 1;
@@ -698,8 +881,28 @@
     padding: 0.5rem;
     border-radius: 4px;
   }
+  .drop-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(59, 130, 246, 0.15);
+    border: 2px dashed #3b82f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    pointer-events: none;
+    font-weight: 600;
+  }
+  .composer-row { display: flex; gap: 0.5rem; align-items: flex-end; width: 100%; }
+  .composer-row textarea { flex: 1; }
+  .attach-btn { padding: 0.35rem 0.5rem; border: 1px solid #ccc; background: #f9f9f9; border-radius: 4px; }
+  .url-attach { display: flex; gap: 0.5rem; width: 100%; margin-bottom: 0.5rem; }
+  .url-attach input { flex: 1; }
+  .inline-img { max-width: 480px; max-height: 360px; border-radius: 6px; margin-top: 0.5rem; display: block; }
+  .img-btn { padding: 0; border: none; background: none; cursor: zoom-in; }
   .input-area {
     display: flex;
+    flex-direction: column;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
     background: #fff;

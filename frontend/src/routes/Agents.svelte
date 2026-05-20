@@ -10,6 +10,7 @@
     selectedAgentId,
   } from "../lib/stores.js";
   import { defaultToolIds } from "../lib/tools.js";
+  import { modelSupportsVision } from "../lib/stores.js";
   import FilteredSelect from "../lib/FilteredSelect.svelte";
   import ToolSelector from "../lib/ToolSelector.svelte";
   import BlockMemory from "../lib/BlockMemory.svelte";
@@ -307,6 +308,9 @@
             onclick={() => selectAgent(agent.id)}
           >
             <strong>{agent.name}</strong>
+            {#if modelSupportsVision(agent.model, models)}
+              <span class="vision-badge" title="This agent's model can see images.">Vision</span>
+            {/if}
             <span class="meta">{agent.model || "—"}</span>
           </button>
         </li>
@@ -548,6 +552,7 @@
   .list li button.selected {
     background: #eff6ff;
   }
+  .vision-badge { font-size: 0.7rem; color: #1d4ed8; margin-left: 0.35rem; }
   .meta {
     font-size: 0.75rem;
     color: #666;

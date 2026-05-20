@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     letta_server_password: str
     # 0 = no cap (loads entire upload into memory). Set bytes to mitigate DoS via huge uploads.
     vision_max_upload_bytes: int = 0
+    vision_max_request_bytes: int = 25 * 1024 * 1024
     letta_client_read_timeout_seconds: float = 600.0
 
 
