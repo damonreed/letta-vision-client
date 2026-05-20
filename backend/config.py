@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+import httpx
 from letta_client import Letta
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,6 +12,7 @@ class Settings(BaseSettings):
     letta_server_password: str
     # 0 = no cap (loads entire upload into memory). Set bytes to mitigate DoS via huge uploads.
     vision_max_upload_bytes: int = 0
+    letta_client_read_timeout_seconds: float = 600.0
 
 
 @lru_cache
@@ -23,4 +25,9 @@ def get_letta_client() -> Letta:
     return Letta(
         base_url=settings.letta_base_url,
         api_key=settings.letta_server_password,
+        timeout=httpx.Timeout(
+            settings.letta_client_read_timeout_seconds,
+            connect=5.0,
+        ),
+        max_retries=0,
     )

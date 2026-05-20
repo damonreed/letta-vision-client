@@ -18,6 +18,7 @@ import sys
 import time
 from pathlib import Path
 
+import httpx
 from letta_client import Letta
 from pydantic import ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,6 +40,8 @@ class SmokeTestSettings(BaseSettings):
 
     letta_base_url: str = "http://localhost:8283"
     letta_server_password: str
+    # letta-client defaults to 60s read; vision runs often exceed that.
+    letta_client_read_timeout_seconds: float = 600.0
 
 
 DEFAULT_AGENT_ID = "agent-f7daa227-a804-4a0f-b3d2-84afd0b92616"
@@ -156,7 +159,16 @@ def main() -> int:
     print(f"Agent ID     : {args.agent}")
     print(f"Mode         : {args.mode}")
 
-    client = Letta(base_url=base_url, api_key=token)
+    client = Letta(
+        base_url=base_url,
+        api_key=token,
+        timeout=httpx.Timeout(
+            settings.letta_client_read_timeout_seconds,
+            connect=5.0,
+        ),
+        # Avoid a second full agent run (and second OpenRouter bill) after read timeout.
+        max_retries=0,
+    )
     image_block = build_image_block(args)
 
     print("\n→ Sending message …")
