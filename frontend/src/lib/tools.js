@@ -77,9 +77,36 @@ export function defaultToolIds(allTools) {
   return allTools.filter((t) => want.has(t.name)).map((t) => t.id);
 }
 
+/** Group tools tagged mcp:{server_name} by server. */
+export function buildMcpToolSections(allTools) {
+  const mcpTools = allTools.filter((t) =>
+    (t.tags || []).some((tag) => String(tag).startsWith("mcp:")),
+  );
+  if (!mcpTools.length) return [];
+
+  const byServer = new Map();
+  for (const tool of mcpTools) {
+    const tag = (tool.tags || []).find((t) => String(t).startsWith("mcp:"));
+    const server = tag ? String(tag).slice(4) : "unknown";
+    if (!byServer.has(server)) byServer.set(server, []);
+    byServer.get(server).push(tool);
+  }
+
+  return [...byServer.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([server, tools]) => ({
+      id: `mcp-${server}`,
+      label: `MCP: ${server}`,
+      tools: tools.sort((a, b) => (a.name || "").localeCompare(b.name || "")),
+    }));
+}
+
 export function buildToolSections(allTools) {
   const byName = new Map(allTools.map((t) => [t.name, t]));
   const used = new Set();
+
+  const mcpSections = buildMcpToolSections(allTools);
+  mcpSections.forEach((s) => s.tools.forEach((t) => used.add(t.name)));
 
   const sections = TOOL_GROUPS.map((group) => {
     const tools = group.tools
@@ -98,7 +125,7 @@ export function buildToolSections(allTools) {
     });
   }
 
-  return sections;
+  return [...mcpSections, ...sections];
 }
 
 export function filterByQuery(items, query, labelFn = (x) => x) {

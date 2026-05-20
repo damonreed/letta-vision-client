@@ -77,13 +77,20 @@ export function initFromHash() {
   const hash = window.location.hash.replace("#", "");
   if (hash === "chat") currentTab.set("chat");
   else if (hash === "files") currentTab.set("files");
+  else if (hash === "mcp") currentTab.set("mcp");
   else currentTab.set("agents");
 }
 
 export function setTab(tab) {
   currentTab.set(tab);
   const hash =
-    tab === "chat" ? "#chat" : tab === "files" ? "#files" : "#agents";
+    tab === "chat"
+      ? "#chat"
+      : tab === "files"
+        ? "#files"
+        : tab === "mcp"
+          ? "#mcp"
+          : "#agents";
   window.location.hash = hash;
 }
 

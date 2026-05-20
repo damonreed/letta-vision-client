@@ -32,12 +32,12 @@ letta-vision-client/
 │   ├── schemas.py
 │   ├── sse.py                # SSE coalescing for chat streams
 │   ├── letta_lists.py        # Paginated SDK list helpers
-│   └── routes/               # /api/* handlers
+│   └── routes/               # /api/* handlers (incl. mcp.py)
 ├── frontend/
 │   ├── src/
-│   │   ├── App.svelte        # Tabs: Agents, Chat, Files
-│   │   ├── lib/              # api.js, stores.js, UI components
-│   │   └── routes/
+│   │   ├── App.svelte        # Tabs: Agents, Chat, Files, MCP
+│   │   ├── lib/              # api.js, stores.js, mcpHelpers.js, UI components
+│   │   └── routes/           # Agents, Chat, Files, Mcp.svelte
 │   └── vite.config.js        # Dev proxy: /api → localhost:8284
 ├── stress-tests/             # Load / limit discovery scripts
 └── docs/
@@ -91,6 +91,8 @@ All routes are under `/api`. Errors return `{"error": "..."}`.
 | Memory (per agent) | `GET/POST/PATCH/DELETE /api/agents/{id}/blocks`, attach/detach |
 | Blocks (global) | `GET/POST /api/blocks`, `GET/PATCH /api/blocks/{id}`, `GET /api/blocks/{id}/agents` |
 | Tools | `GET /api/tools`, attach/detach on agent |
+| MCP servers | `GET/POST /api/mcp/servers`, `GET/PATCH/DELETE /api/mcp/servers/{id}`, tools list, refresh, connect SSE |
+| Images | `POST /api/images/fetch-url` — server-side URL fetch for composer (bypasses browser CORS) |
 | Models | `GET /api/models`, `GET /api/embeddings` |
 | Folders / files | Folder CRUD, file upload, agent folder attach/detach |
 
@@ -98,12 +100,28 @@ SDK list endpoints are drained via pagination helpers in `letta_lists.py` (no ar
 
 ## Frontend
 
-- **Hash routing:** `#agents`, `#chat`, `#files`
+- **Hash routing:** `#agents`, `#chat`, `#files`, `#mcp`
 - **localStorage keys** (prefix `letta-vision-client/`; legacy `letta-bridge/` keys are read once then migrated):
   - `selected-agent`
   - `active-conversation:{agent_id}`
   - `system-expanded-{agent_id}` (chat UI)
 - **Chat:** Markdown rendering, reasoning blocks, tool call display, conversation sidebar, SSE via `fetch` + `ReadableStream`
+
+## MCP server management
+
+MCP servers are **org-scoped** in Letta. Agents do not connect to servers directly; they attach **synced tools** (`mcp:{server_name}` tags) via the existing tool attach API.
+
+| Bridge route | Letta API |
+|--------------|-----------|
+| `GET/POST /api/mcp/servers` | `GET/POST /v1/mcp-servers/` |
+| `GET/PATCH/DELETE /api/mcp/servers/{id}` | CRUD by server ID |
+| `GET /api/mcp/servers/{id}/tools` | Persisted Letta tools for that server |
+| `POST /api/mcp/servers/{id}/refresh` | `PATCH /v1/mcp-servers/{id}/refresh` (optional `agent_id`) |
+| `GET /api/mcp/servers/{id}/connect` | `GET /v1/mcp-servers/connect/{id}` (SSE OAuth proxy) |
+
+**UI:** `frontend/src/routes/Mcp.svelte` — server list (left), config/connect/refresh/tools (right), agent tool attach. Transports: stdio, SSE, streamable HTTP.
+
+**Stdio note:** Commands run inside the Letta server process/container; paths must exist there (relevant for `letta-vision-deploy`).
 
 ## Vision support (v0.3.0+)
 

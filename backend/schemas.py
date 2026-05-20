@@ -109,6 +109,55 @@ class CreateFolderRequest(BaseModel):
     embedding: str
 
 
+class McpStdioConfig(BaseModel):
+    mcp_server_type: Literal["stdio"] = "stdio"
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] | None = None
+
+
+class McpSseConfig(BaseModel):
+    mcp_server_type: Literal["sse"] = "sse"
+    server_url: str
+    auth_header: str | None = None
+    auth_token: str | None = None
+    custom_headers: dict[str, str] | None = None
+
+
+class McpStreamableHttpConfig(BaseModel):
+    mcp_server_type: Literal["streamable_http"] = "streamable_http"
+    server_url: str
+    auth_header: str | None = None
+    auth_token: str | None = None
+    custom_headers: dict[str, str] | None = None
+
+
+McpServerConfig = Union[McpStdioConfig, McpSseConfig, McpStreamableHttpConfig]
+
+
+class CreateMcpServerRequest(BaseModel):
+    server_name: str
+    config: McpServerConfig
+
+
+class UpdateMcpServerRequest(BaseModel):
+    server_name: str | None = None
+    config: McpServerConfig | None = None
+
+
+class McpRefreshRequest(BaseModel):
+    agent_id: str | None = None
+
+
+class FetchImageUrlRequest(BaseModel):
+    url: str
+
+
+class FetchImageUrlResponse(BaseModel):
+    media_type: str
+    data: str
+
+
 class ErrorResponse(BaseModel):
     error: str
 

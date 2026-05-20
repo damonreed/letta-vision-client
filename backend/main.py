@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.routes import agents, blocks, conversations, folders, memory, messages, models, tools
+from backend.routes import agents, blocks, conversations, folders, images, mcp, memory, messages, models, tools
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -39,6 +39,8 @@ app.include_router(messages.router)
 app.include_router(memory.router)
 app.include_router(tools.router)
 app.include_router(models.router)
+app.include_router(mcp.router)
+app.include_router(images.router)
 
 
 @app.exception_handler(HTTPException)

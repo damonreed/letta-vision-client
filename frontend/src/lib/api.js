@@ -77,6 +77,31 @@ export const api = {
     request(`/blocks/${encodeURIComponent(blockId)}/agents`),
 
   listTools: () => request("/tools"),
+
+  listMcpServers: () => request("/mcp/servers"),
+  getMcpServer: (id) => request(`/mcp/servers/${id}`),
+  createMcpServer: (body) =>
+    request("/mcp/servers", { method: "POST", body: JSON.stringify(body) }),
+  updateMcpServer: (id, body) =>
+    request(`/mcp/servers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteMcpServer: (id) =>
+    request(`/mcp/servers/${id}`, { method: "DELETE" }),
+  listMcpServerTools: (id) => request(`/mcp/servers/${id}/tools`),
+  refreshMcpServer: (id, agentId = null) =>
+    request(`/mcp/servers/${id}/refresh`, {
+      method: "POST",
+      body: JSON.stringify(agentId ? { agent_id: agentId } : {}),
+    }),
+
+  async *streamMcpConnect(mcpServerId, { signal } = {}) {
+    const res = await fetch(`${API}/mcp/servers/${mcpServerId}/connect`, { signal });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || res.statusText);
+    }
+    const { parseMcpConnectStream } = await import("./mcpConnect.js");
+    yield* parseMcpConnectStream(res);
+  },
   attachTool: (agentId, toolId) =>
     request(`/agents/${agentId}/tools`, {
       method: "POST",

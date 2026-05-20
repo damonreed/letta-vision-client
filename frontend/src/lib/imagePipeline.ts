@@ -74,11 +74,20 @@ export async function fileToImageBlock(file: File): Promise<ImageBlock> {
 }
 
 export async function fetchUrlToImageBlock(url: string): Promise<ImageBlock> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status} ${res.statusText}`);
-  const ct = res.headers.get("content-type") || "";
-  if (!ct.startsWith("image/")) throw new Error(`URL did not return an image (content-type: ${ct || "unknown"})`);
-  const blob = await res.blob();
+  const res = await fetch("/api/images/fetch-url", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  const { media_type, data } = (await res.json()) as { media_type: string; data: string };
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const blob = new Blob([bytes], { type: media_type });
   return blobToImageBlock(blob, url);
 }
 
