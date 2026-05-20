@@ -53,13 +53,13 @@ flowchart LR
   Letta --> DB[(PostgreSQL)]
 ```
 
-In the **letta-stack deploy** compose file, the vision client service depends on `letta` and uses `LETTA_BASE_URL=http://letta:8283`. For local dev, point at `http://localhost:8283`.
+In **[letta-vision-deploy](https://github.com/damonreed/letta-vision-deploy)**, the client uses `LETTA_BASE_URL=http://letta-vision:8283` on the Compose network. For local dev, point at `http://localhost:8283`.
 
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LETTA_BASE_URL` | `http://letta:8283` | Letta server URL (Docker network hostname or localhost) |
+| `LETTA_BASE_URL` | `http://letta-vision:8283` | Letta server URL (Compose service name or localhost) |
 | `LETTA_SERVER_PASSWORD` | *(required)* | Letta server password / API key |
 | `VISION_MAX_UPLOAD_BYTES` | `0` | Max folder upload size in bytes (`0` = unlimited) |
 

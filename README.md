@@ -27,11 +27,11 @@ Open http://localhost:8284
 
 ### With [letta-vision-deploy](https://github.com/damonreed/letta-vision-deploy)
 
-From the deploy repo (with this repo cloned as sibling `../letta-vision-client`):
+With this repo cloned as sibling `../letta-vision-client`:
 
 ```bash
 cd ../letta-vision-deploy
-docker compose up -d --build letta-vision-client
+docker compose up -d --build
 ```
 
 ## Local development
