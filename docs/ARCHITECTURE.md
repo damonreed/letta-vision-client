@@ -105,7 +105,7 @@ SDK list endpoints are drained via pagination helpers in `letta_lists.py` (no ar
   - `system-expanded-{agent_id}` (chat UI)
 - **Chat:** Markdown rendering, reasoning blocks, tool call display, conversation sidebar, SSE via `fetch` + `ReadableStream`
 
-## Vision support (v0.2+)
+## Vision support (v0.3.0+)
 
 - **Input:** File picker, drag-drop, clipboard paste, and URL fetch in the browser. Images are downscaled/re-encoded in `frontend/src/lib/imagePipeline.ts` before send.
 - **Outbound shape:** `POST /api/agents/{id}/messages` accepts `content` as a string or an array of `{type: text|image}` blocks (proxied to Letta `input`).
