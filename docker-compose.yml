@@ -1,0 +1,12 @@
+services:
+  letta-vision-client:
+    build: .
+    container_name: letta-vision-client
+    ports:
+      - "8284:8284"
+    environment:
+      - LETTA_BASE_URL=${LETTA_BASE_URL:-http://host.docker.internal:8283}
+      - LETTA_SERVER_PASSWORD=${LETTA_SERVER_PASSWORD}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

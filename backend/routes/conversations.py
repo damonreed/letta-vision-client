@@ -1,0 +1,153 @@
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException
+
+from backend.config import get_letta_client
+from backend.letta_lists import collect_sync_page
+from backend.schemas import (
+    ConversationSummary,
+    CreateConversationRequest,
+    UpdateConversationRequest,
+    serialize,
+)
+
+router = APIRouter(prefix="/api", tags=["conversations"])
+
+DEFAULT_CONVERSATION_ID = "default"
+
+
+# Sidebar preview only — not a cap on history returned to the chat view.
+PREVIEW_MAX_CHARS = 60
+
+
+def _message_preview(message) -> str:
+    data = serialize(message)
+    content = data.get("content")
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text = " ".join(
+            p.get("text", "") if isinstance(p, dict) else str(p) for p in content
+        )
+    else:
+        text = data.get("reasoning") or ""
+    if not text and data.get("tool_call"):
+        text = str(data["tool_call"])
+    return (text or "")[:PREVIEW_MAX_CHARS]
+
+
+def _last_preview(client, conversation_id: str, agent_id: str) -> str:
+    try:
+        # One message is enough for sidebar preview text (not a history truncation).
+        kwargs = {"limit": 1, "order": "desc"}
+        if conversation_id == DEFAULT_CONVERSATION_ID:
+            messages = client.conversations.messages.list(
+                DEFAULT_CONVERSATION_ID, agent_id=agent_id, **kwargs
+            ).items
+        else:
+            messages = client.conversations.messages.list(
+                conversation_id, **kwargs
+            ).items
+        if messages:
+            return _message_preview(messages[0])
+    except Exception:
+        pass
+    return ""
+
+
+def _to_summary(client, conv, *, is_default: bool = False) -> ConversationSummary:
+    data = serialize(conv)
+    conv_id = DEFAULT_CONVERSATION_ID if is_default else data.get("id", "")
+    agent_id = data.get("agent_id", "")
+    name = data.get("summary") or None
+    last_at = data.get("last_message_at")
+    if isinstance(last_at, datetime):
+        last_at = last_at.isoformat()
+    preview = _last_preview(client, conv_id, agent_id) if agent_id else ""
+    return ConversationSummary(
+        id=conv_id,
+        agent_id=agent_id,
+        name=name,
+        is_default=is_default,
+        last_message_at=last_at,
+        last_message_preview=preview,
+        created_at=(
+            data.get("created_at").isoformat()
+            if isinstance(data.get("created_at"), datetime)
+            else data.get("created_at")
+        ),
+    )
+
+
+def _default_summary(client, agent_id: str) -> ConversationSummary:
+    preview = _last_preview(client, DEFAULT_CONVERSATION_ID, agent_id)
+    return ConversationSummary(
+        id=DEFAULT_CONVERSATION_ID,
+        agent_id=agent_id,
+        name="Default conversation",
+        is_default=True,
+        last_message_at=None,
+        last_message_preview=preview,
+        created_at=None,
+    )
+
+
+@router.get("/agents/{agent_id}/conversations")
+def list_conversations(agent_id: str):
+    client = get_letta_client()
+    try:
+        items = collect_sync_page(
+            client.conversations.list(agent_id=agent_id, order="desc")
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"error": str(e)}) from e
+
+    summaries = [_default_summary(client, agent_id)]
+    for conv in items:
+        summaries.append(_to_summary(client, conv))
+    return summaries
+
+
+@router.post("/agents/{agent_id}/conversations")
+def create_conversation(agent_id: str, body: CreateConversationRequest):
+    client = get_letta_client()
+    name = (body.name or "").strip()
+    if not name:
+        name = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    try:
+        conv = client.conversations.create(agent_id=agent_id, summary=name)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"error": str(e)}) from e
+    return _to_summary(client, conv)
+
+
+@router.patch("/conversations/{conversation_id}")
+def update_conversation(conversation_id: str, body: UpdateConversationRequest):
+    if conversation_id == DEFAULT_CONVERSATION_ID:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Cannot rename the default conversation"},
+        )
+    client = get_letta_client()
+    try:
+        conv = client.conversations.update(
+            conversation_id, summary=body.name.strip()
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"error": str(e)}) from e
+    return _to_summary(client, conv)
+
+
+@router.delete("/conversations/{conversation_id}")
+def delete_conversation(conversation_id: str):
+    if conversation_id == DEFAULT_CONVERSATION_ID:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Cannot delete the default conversation"},
+        )
+    client = get_letta_client()
+    try:
+        client.conversations.delete(conversation_id)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail={"error": str(e)}) from e
+    return {"ok": True}

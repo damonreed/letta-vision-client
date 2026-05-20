@@ -1,0 +1,162 @@
+const API = "/api";
+
+async function request(path, options = {}) {
+  const res = await fetch(`${API}${path}`, {
+    headers: { "Content-Type": "application/json", ...options.headers },
+    ...options,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+export const api = {
+  listAgents: () => request("/agents"),
+  getAgent: (id) => request(`/agents/${id}`),
+  createAgent: (body) =>
+    request("/agents", { method: "POST", body: JSON.stringify(body) }),
+  updateAgent: (id, body) =>
+    request(`/agents/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteAgent: (id) =>
+    request(`/agents/${id}`, { method: "DELETE" }),
+
+  getHistory: (id, conversationId = null) => {
+    const params = new URLSearchParams();
+    if (conversationId) params.set("conversation_id", conversationId);
+    const qs = params.toString();
+    return request(`/agents/${id}/history${qs ? `?${qs}` : ""}`);
+  },
+
+  listConversations: (agentId) => request(`/agents/${agentId}/conversations`),
+  createConversation: (agentId, name) =>
+    request(`/agents/${agentId}/conversations`, {
+      method: "POST",
+      body: JSON.stringify({ name: name || null }),
+    }),
+  updateConversation: (conversationId, name) =>
+    request(`/conversations/${conversationId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  deleteConversation: (conversationId) =>
+    request(`/conversations/${conversationId}`, { method: "DELETE" }),
+
+  listBlocks: (id) => request(`/agents/${id}/blocks`),
+  updateBlock: (agentId, label, value) =>
+    request(`/agents/${agentId}/blocks/${encodeURIComponent(label)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ value }),
+    }),
+  createBlock: (agentId, body) =>
+    request(`/agents/${agentId}/blocks`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  detachBlock: (agentId, blockId) =>
+    request(`/agents/${agentId}/blocks/${encodeURIComponent(blockId)}`, {
+      method: "DELETE",
+    }),
+  attachBlock: (agentId, blockId) =>
+    request(`/agents/${agentId}/blocks/attach/${encodeURIComponent(blockId)}`, {
+      method: "POST",
+    }),
+
+  listAllBlocks: () => request("/blocks"),
+  createGlobalBlock: (body) =>
+    request("/blocks", { method: "POST", body: JSON.stringify(body) }),
+  getBlock: (blockId) => request(`/blocks/${encodeURIComponent(blockId)}`),
+  updateGlobalBlock: (blockId, body) =>
+    request(`/blocks/${encodeURIComponent(blockId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  listBlockAgents: (blockId) =>
+    request(`/blocks/${encodeURIComponent(blockId)}/agents`),
+
+  listTools: () => request("/tools"),
+  attachTool: (agentId, toolId) =>
+    request(`/agents/${agentId}/tools`, {
+      method: "POST",
+      body: JSON.stringify({ tool_id: toolId }),
+    }),
+  detachTool: (agentId, toolId) =>
+    request(`/agents/${agentId}/tools/${toolId}`, { method: "DELETE" }),
+
+  listModels: () => request("/models"),
+  listEmbeddings: () => request("/embeddings"),
+
+  listFolders: () => request("/folders"),
+  createFolder: (body) =>
+    request("/folders", { method: "POST", body: JSON.stringify(body) }),
+  deleteFolder: (folderId) =>
+    request(`/folders/${folderId}`, { method: "DELETE" }),
+  listFolderFiles: (folderId) => request(`/folders/${folderId}/files`),
+  uploadFolderFile: async (folderId, file, duplicateHandling = "replace") => {
+    const form = new FormData();
+    form.append("upload", file);
+    const params = new URLSearchParams({ duplicate_handling: duplicateHandling });
+    const res = await fetch(`${API}/folders/${folderId}/files?${params}`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || res.statusText);
+    }
+    return res.json();
+  },
+  deleteFolderFile: (folderId, fileId) =>
+    request(`/folders/${folderId}/files/${fileId}`, { method: "DELETE" }),
+
+  listAgentFolders: (agentId) => request(`/agents/${agentId}/folders`),
+  attachFolderToAgent: (agentId, folderId) =>
+    request(`/agents/${agentId}/folders/${folderId}/attach`, { method: "POST" }),
+  detachFolderFromAgent: (agentId, folderId) =>
+    request(`/agents/${agentId}/folders/${folderId}/detach`, { method: "DELETE" }),
+
+  async *streamMessage(agentId, content, conversationId = null, { signal } = {}) {
+    const params = conversationId
+      ? `?conversation_id=${encodeURIComponent(conversationId)}`
+      : "";
+    const res = await fetch(`${API}/agents/${agentId}/messages${params}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+      signal,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || res.statusText);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      if (signal?.aborted) break;
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() || "";
+      for (const part of parts) {
+        for (const line of part.split("\n")) {
+          if (line.startsWith("data: ")) {
+            try {
+              yield JSON.parse(line.slice(6));
+            } catch {
+              /* skip malformed */
+            }
+          }
+        }
+      }
+    }
+  },
+};
+
+export function modelHandle(m) {
+  if (typeof m === "string") return m;
+  return m?.handle || m?.embedding_model || m?.model || m?.name || String(m);
+}

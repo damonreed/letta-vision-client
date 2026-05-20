@@ -1,0 +1,730 @@
+<script>
+  import { onDestroy, onMount, tick } from "svelte";
+  import DOMPurify from "dompurify";
+  import { marked } from "marked";
+  import { api } from "../lib/api.js";
+  import { messageListKey, sortMessagesChronological, withUniqueMessageIds } from "../lib/messages.js";
+  import { buildDisplayGroups } from "../lib/chatDisplay.js";
+  import ConversationList from "../lib/ConversationList.svelte";
+  import {
+    activeConversationId,
+    agents,
+    loadChatDraft,
+    loadSelectedAgent,
+    pickConversationForAgent,
+    saveChatDraft,
+    saveSelectedAgent,
+    selectedAgentId,
+  } from "../lib/stores.js";
+
+  let agentList = $state([]);
+  let agentId = $state(null);
+  let conversationId = $state(null);
+  let messages = $state([]);
+  let input = $state("");
+  let streaming = $state(false);
+  let error = $state("");
+  let showMemory = $state(false);
+  let memoryBlocks = $state([]);
+  let expanded = $state({});
+  let expandedTurns = $state({});
+  let listEl = $state(null);
+  let historyRequest = 0;
+  let stickToBottom = $state(true);
+  let draftAgentId = null;
+  let draftConversationId = null;
+  /** @type {{ abort: AbortController, agentId: string, conversationId: string, streamId: number } | null} */
+  let activeStream = null;
+  let streamIdCounter = 0;
+
+  const SCROLL_BOTTOM_THRESHOLD = 64;
+
+  const displayGroups = $derived(buildDisplayGroups(messages));
+
+  function isNearBottom(el = listEl, threshold = SCROLL_BOTTOM_THRESHOLD) {
+    if (!el) return true;
+    return el.scrollHeight - el.clientHeight - el.scrollTop <= threshold;
+  }
+
+  function onMessagesScroll() {
+    stickToBottom = isNearBottom();
+  }
+
+  $effect(() => {
+    if (!stickToBottom || !listEl) return;
+    // Track length and last message content so streaming updates trigger scroll.
+    const last = messages.at(-1);
+    void messages.length;
+    void last?.content;
+    void last?.reasoning;
+    scrollToBottom();
+  });
+
+  $effect(() => {
+    const same =
+      agentId === draftAgentId && conversationId === draftConversationId;
+    if (same) return;
+
+    if (draftAgentId != null && draftConversationId != null) {
+      saveChatDraft(draftAgentId, draftConversationId, input);
+    }
+
+    draftAgentId = agentId;
+    draftConversationId = conversationId;
+    input =
+      agentId && conversationId ? loadChatDraft(agentId, conversationId) : "";
+  });
+
+  onDestroy(() => {
+    stopActiveStream();
+    if (agentId && conversationId) saveChatDraft(agentId, conversationId, input);
+  });
+
+  function stopActiveStream() {
+    if (!activeStream) return;
+    activeStream.abort.abort();
+    activeStream = null;
+    streaming = false;
+  }
+
+  function isCurrentStream(streamId) {
+    return activeStream?.streamId === streamId;
+  }
+
+  onMount(() => {
+    loadAgents();
+    const u1 = agents.subscribe((a) => (agentList = a));
+    const u2 = selectedAgentId.subscribe((id) => {
+      if (id) {
+        agentId = id;
+        loadMemory(id);
+      }
+    });
+    const u3 = activeConversationId.subscribe((cid) => {
+      conversationId = cid;
+    });
+    return () => {
+      u1();
+      u2();
+      u3();
+    };
+  });
+
+  $effect(() => {
+    const aid = agentId;
+    const cid = conversationId;
+    stopActiveStream();
+    if (aid && cid) {
+      loadHistory(aid, cid);
+    } else {
+      messages = [];
+    }
+  });
+
+  async function loadAgents() {
+    try {
+      const a = await api.listAgents();
+      agents.set(a);
+      if (!agentId && a.length) {
+        const saved = loadSelectedAgent();
+        const pick =
+          saved && a.some((ag) => ag.id === saved) ? saved : a[0].id;
+        agentId = pick;
+        selectedAgentId.set(agentId);
+        activeConversationId.set(pickConversationForAgent(pick));
+      }
+    } catch (err) {
+      error = err.message;
+    }
+  }
+
+  async function onAgentChange(e) {
+    const id = e.target.value;
+    agentId = id;
+    selectedAgentId.set(id);
+    saveSelectedAgent(id);
+    historyRequest++;
+    messages = [];
+    activeConversationId.set(pickConversationForAgent(id));
+    await loadMemory(id);
+  }
+
+  async function loadHistory(id, convId = conversationId) {
+    if (!id || !convId) return;
+    const requestId = ++historyRequest;
+    error = "";
+    try {
+      const hist = await api.getHistory(id, convId);
+      if (requestId !== historyRequest) return;
+      const normalized = sortMessagesChronological(hist.map(normalizeMessage));
+      messages = withUniqueMessageIds(normalized);
+      stickToBottom = true;
+      await scrollToBottom();
+    } catch (err) {
+      if (requestId !== historyRequest) return;
+      error = err.message;
+    }
+  }
+
+  async function loadMemory(id) {
+    try {
+      memoryBlocks = await api.listBlocks(id);
+    } catch {
+      memoryBlocks = [];
+    }
+  }
+
+  function systemExpandedKey(id) {
+    return `letta-vision-client-system-expanded-${id}`;
+  }
+
+  function legacySystemExpandedKey(id) {
+    return `letta-bridge-system-expanded-${id}`;
+  }
+
+  function isSystemExpanded(id) {
+    if (typeof localStorage === "undefined") return false;
+    return (
+      localStorage.getItem(systemExpandedKey(id)) === "1" ||
+      localStorage.getItem(legacySystemExpandedKey(id)) === "1"
+    );
+  }
+
+  function setSystemExpanded(id, open) {
+    localStorage.setItem(systemExpandedKey(id), open ? "1" : "0");
+    localStorage.removeItem(legacySystemExpandedKey(id));
+  }
+
+  function systemSummary(content) {
+    const text = typeof content === "string" ? content : JSON.stringify(content);
+    const blockCount = (text.match(/<memory_blocks>/g) || []).length
+      ? (text.match(/label=/gi) || []).length
+      : 0;
+    const blocks = blockCount || (text.includes("memory") ? "?" : "0");
+    return `System context (${blocks} memory blocks, ${text.length} chars)`;
+  }
+
+  function normalizeMessage(m) {
+    const type = m.message_type || "unknown";
+    let role = "system";
+    if (type === "user_message") role = "user";
+    else if (type === "assistant_message") role = "agent";
+    else if (type === "tool_call_message") role = "tool_call";
+    else if (type === "tool_return_message") role = "tool_result";
+    else if (type === "reasoning_message" || type === "hidden_reasoning_message")
+      role = "reasoning";
+    else if (type === "system_message") role = "system";
+
+    let content = "";
+    if (m.content != null) {
+      content =
+        typeof m.content === "string"
+          ? m.content
+          : JSON.stringify(m.content, null, 2);
+    } else if (m.reasoning) {
+      content = m.reasoning;
+    } else if (m.tool_call) {
+      content = JSON.stringify(m.tool_call, null, 2);
+    } else if (m.tool_return != null) {
+      content =
+        typeof m.tool_return === "string"
+          ? m.tool_return
+          : JSON.stringify(m.tool_return, null, 2);
+    }
+
+    const id = m.id || crypto.randomUUID();
+    const systemCollapsed = role === "system" && agentId && !isSystemExpanded(agentId);
+
+    return {
+      id,
+      role,
+      type,
+      content,
+      date: m.date,
+      seq_id: m.seq_id ?? null,
+      collapsed: ["tool_call", "tool_result"].includes(role) || systemCollapsed,
+      systemSummary: role === "system" ? systemSummary(content) : null,
+    };
+  }
+
+  function toggleSystemContext() {
+    if (!agentId) return;
+    const next = !isSystemExpanded(agentId);
+    setSystemExpanded(agentId, next);
+    messages = messages.map((m) =>
+      m.role === "system"
+        ? { ...m, collapsed: !next, systemSummary: systemSummary(m.content) }
+        : m
+    );
+  }
+
+  async function scrollToBottom() {
+    await tick();
+    requestAnimationFrame(() => {
+      if (listEl) listEl.scrollTop = listEl.scrollHeight;
+    });
+  }
+
+  function toggleExpand(id) {
+    expanded = { ...expanded, [id]: !expanded[id] };
+  }
+
+  function toggleTurnExpand(key) {
+    expandedTurns = { ...expandedTurns, [key]: !expandedTurns[key] };
+  }
+
+  function extractReasoning(event) {
+    return (
+      event.reasoning ||
+      event.hidden_reasoning ||
+      (typeof event.content === "string" ? event.content : "")
+    );
+  }
+
+  async function send() {
+    const text = input.trim();
+    if (!text || !agentId || streaming) return;
+
+    const streamAgentId = agentId;
+    const streamConversationId = conversationId;
+    const streamId = ++streamIdCounter;
+    const abort = new AbortController();
+    activeStream = {
+      abort,
+      agentId: streamAgentId,
+      conversationId: streamConversationId,
+      streamId,
+    };
+
+    input = "";
+    saveChatDraft(streamAgentId, streamConversationId, "");
+    streaming = true;
+    stickToBottom = true;
+    error = "";
+
+    const userMsg = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      type: "user_message",
+      content: text,
+      date: new Date().toISOString(),
+      collapsed: false,
+    };
+    messages = withUniqueMessageIds([...messages, userMsg]);
+    await scrollToBottom();
+
+    let assistantIdx = null;
+    let pendingReasoning = "";
+    let streamPart = 0;
+
+    try {
+      for await (const event of api.streamMessage(
+        streamAgentId,
+        text,
+        streamConversationId,
+        { signal: abort.signal }
+      )) {
+        if (!isCurrentStream(streamId)) return;
+
+        if (event.type === "reasoning") {
+          pendingReasoning += extractReasoning(event);
+          if (assistantIdx !== null) {
+            messages[assistantIdx].reasoning = pendingReasoning;
+            messages = [...messages];
+          }
+        } else if (event.type === "message") {
+          const chunk =
+            typeof event.content === "string"
+              ? event.content
+              : extractText(event.content);
+          if (assistantIdx === null) {
+            const row = {
+              id: event.id
+                ? `${event.id}-part-${streamPart++}`
+                : `stream-${Date.now()}-${streamPart++}`,
+              role: "agent",
+              type: "assistant_message",
+              content: chunk,
+              reasoning: pendingReasoning || undefined,
+              date: event.date,
+              collapsed: false,
+            };
+            messages = withUniqueMessageIds([...messages, row]);
+            assistantIdx = messages.length - 1;
+          } else {
+            messages[assistantIdx].content += chunk || "";
+            messages = [...messages];
+          }
+        } else if (event.type === "tool_call") {
+          messages = withUniqueMessageIds([
+            ...messages,
+            normalizeMessage({ ...event, message_type: "tool_call_message" }),
+          ]);
+          assistantIdx = null;
+          pendingReasoning = "";
+        } else if (event.type === "tool_result") {
+          messages = withUniqueMessageIds([
+            ...messages,
+            normalizeMessage({ ...event, message_type: "tool_return_message" }),
+          ]);
+          assistantIdx = null;
+        } else if (event.type === "done") {
+          break;
+        } else if (event.type === "error") {
+          error = event.message || "Stream error";
+        }
+      }
+      if (!isCurrentStream(streamId)) return;
+      if (stickToBottom) await scrollToBottom();
+      await loadMemory(streamAgentId);
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      if (isCurrentStream(streamId)) error = err.message;
+    } finally {
+      if (isCurrentStream(streamId)) {
+        activeStream = null;
+        streaming = false;
+      }
+    }
+  }
+
+  function extractText(content) {
+    if (!content) return "";
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content
+        .map((p) => (typeof p === "string" ? p : p?.text || ""))
+        .join("");
+    }
+    return "";
+  }
+
+  function onKeydown(e) {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      send();
+    }
+  }
+
+  function formatDate(d) {
+    if (!d) return "";
+    try {
+      return new Date(d).toLocaleString();
+    } catch {
+      return d;
+    }
+  }
+
+  function renderMarkdown(text) {
+    try {
+      const html = marked.parse(text || "");
+      return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+    } catch {
+      return DOMPurify.sanitize(text || "");
+    }
+  }
+</script>
+
+<div class="chat-layout">
+  <header class="chat-header">
+    <select value={agentId} onchange={onAgentChange}>
+      {#each agentList as a}
+        <option value={a.id}>{a.name}</option>
+      {/each}
+    </select>
+    <button
+      class="memory-btn"
+      title="Memory blocks"
+      onclick={() => (showMemory = !showMemory)}
+    >
+      memory
+    </button>
+  </header>
+
+  {#if error}<p class="error">{error}</p>{/if}
+
+  <div class="chat-body">
+    <ConversationList agentId={agentId} />
+    <div class="messages" bind:this={listEl} onscroll={onMessagesScroll}>
+      {#each displayGroups as group (group.key)}
+        {#if group.type === "user" || group.type === "single"}
+          {#each group.messages as msg, i (messageListKey(msg, i))}
+            {@render messageArticle(msg)}
+          {/each}
+        {:else}
+          <div class="turn-group">
+            {#each group.visible as msg, i (messageListKey(msg, i))}
+              {@render messageArticle(msg)}
+            {/each}
+            {#if group.hiddenCount > 0}
+              <button
+                type="button"
+                class="turn-expand"
+                onclick={() => toggleTurnExpand(group.key)}
+              >
+                {expandedTurns[group.key]
+                  ? "Show fewer"
+                  : `Show all (${group.total} total)`}
+              </button>
+              {#if expandedTurns[group.key]}
+                {#each group.hidden as msg, i (messageListKey(msg, `h-${i}`))}
+                  {@render messageArticle(msg)}
+                {/each}
+              {/if}
+            {/if}
+          </div>
+        {/if}
+      {/each}
+    </div>
+
+    {#if showMemory}
+      <aside class="memory-panel">
+        <h3>Memory</h3>
+        {#each memoryBlocks as block}
+          <div class="mem-block">
+            <strong>{block.label}</strong>
+            <pre>{block.value}</pre>
+          </div>
+        {/each}
+      </aside>
+    {/if}
+  </div>
+
+  <footer class="input-area">
+    <textarea
+      bind:value={input}
+      onkeydown={onKeydown}
+      placeholder="Message… (Cmd+Enter to send)"
+      rows="2"
+      disabled={streaming}
+    ></textarea>
+    <button onclick={send} disabled={streaming || !input.trim()}>Send</button>
+  </footer>
+</div>
+
+{#snippet messageArticle(msg)}
+  <article class="msg {msg.role}">
+    <div class="msg-header">
+      <span class="role">{msg.role}</span>
+      <span class="time">{formatDate(msg.date)}</span>
+    </div>
+    {#if msg.reasoning}
+      <details class="reasoning" open={expanded[`r-${msg.id}`]}>
+        <summary onclick={() => toggleExpand(`r-${msg.id}`)}>
+          Reasoning
+        </summary>
+        <pre>{msg.reasoning}</pre>
+      </details>
+    {/if}
+    {#if msg.role === "system"}
+      <div class="system-context">
+        <button type="button" class="system-toggle" onclick={toggleSystemContext}>
+          {msg.collapsed ? msg.systemSummary : "[hide system context]"}
+        </button>
+        {#if !msg.collapsed}
+          <pre class="system-body">{msg.content}</pre>
+        {/if}
+      </div>
+    {:else if msg.role === "tool_call" || msg.role === "tool_result"}
+      <details open={!msg.collapsed}>
+        <summary>{msg.role === "tool_call" ? "Tool call" : "Tool result"}</summary>
+        <pre class="wrap">{msg.content}</pre>
+      </details>
+    {:else if msg.role === "agent"}
+      <div class="content md">{@html renderMarkdown(msg.content)}</div>
+    {:else}
+      <div class="content"><pre class="wrap">{msg.content}</pre></div>
+    {/if}
+  </article>
+{/snippet}
+
+<style>
+  .chat-layout {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 52px);
+  }
+  .chat-header {
+    display: flex;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+    align-items: center;
+  }
+  .chat-header select {
+    flex: 1;
+    max-width: 320px;
+  }
+  .memory-btn {
+    font-size: 0.8rem;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid #ccc;
+    background: #f9f9f9;
+    border-radius: 4px;
+  }
+  .chat-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .messages {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .msg {
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    max-width: 85%;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: #eff6ff;
+  }
+  .msg.agent {
+    align-self: flex-start;
+    width: 100%;
+    max-width: 85%;
+    min-width: 0;
+  }
+  .msg.tool_call,
+  .msg.tool_result {
+    align-self: stretch;
+    max-width: 100%;
+    background: #fafafa;
+    border-style: dashed;
+  }
+  .turn-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .turn-expand {
+    align-self: flex-start;
+    background: #f3f4f6;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    padding: 0.35rem 0.65rem;
+    font-size: 0.8rem;
+    color: #374151;
+    cursor: pointer;
+  }
+  .turn-expand:hover {
+    background: #e5e7eb;
+  }
+  .msg-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: #666;
+    margin-bottom: 0.35rem;
+  }
+  .role {
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .reasoning {
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+    color: #6b7280;
+    width: 100%;
+    min-width: 0;
+  }
+  .reasoning pre {
+    white-space: pre-wrap;
+    word-break: normal;
+    overflow-wrap: break-word;
+    margin: 0.25rem 0 0;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  .content pre,
+  pre.wrap,
+  pre.system-body {
+    white-space: pre-wrap;
+    word-break: normal;
+    overflow-wrap: break-word;
+    margin: 0;
+    font-size: 0.9rem;
+  }
+  .system-context {
+    font-size: 0.85rem;
+    color: #6b7280;
+  }
+  .system-toggle {
+    background: none;
+    border: none;
+    padding: 0;
+    color: #6b7280;
+    font-size: 0.85rem;
+    cursor: pointer;
+    text-align: left;
+  }
+  .system-toggle:hover {
+    text-decoration: underline;
+  }
+  .msg.system {
+    max-width: 100%;
+    align-self: stretch;
+    background: #f9fafb;
+    border-style: dotted;
+  }
+  .content.md :global(p) {
+    margin: 0.25rem 0;
+  }
+  .memory-panel {
+    width: 280px;
+    border-left: 1px solid #ddd;
+    background: #fff;
+    padding: 1rem;
+    overflow-y: auto;
+  }
+  .mem-block {
+    margin-bottom: 1rem;
+  }
+  .mem-block pre {
+    white-space: pre-wrap;
+    font-size: 0.8rem;
+    background: #f5f5f5;
+    padding: 0.5rem;
+    border-radius: 4px;
+  }
+  .input-area {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: #fff;
+    border-top: 1px solid #ddd;
+  }
+  .input-area textarea {
+    flex: 1;
+    resize: none;
+    padding: 0.5rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+  }
+  .input-area button {
+    padding: 0.5rem 1.25rem;
+    background: #2563eb;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+  }
+  .input-area button:disabled {
+    opacity: 0.5;
+  }
+  .error {
+    color: #dc2626;
+    margin: 0;
+    padding: 0.5rem 1rem;
+  }
+</style>

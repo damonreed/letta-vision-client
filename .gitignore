@@ -1,0 +1,10 @@
+.venv/
+static/
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+wheels/
+.DS_Store

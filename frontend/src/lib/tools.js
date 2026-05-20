@@ -1,0 +1,108 @@
+/** Tool names pre-checked when creating a new agent. */
+export const DEFAULT_TOOL_NAMES = [
+  "send_message",
+  "memory",
+  "search_memory",
+  "store_memories",
+  "conversation_search",
+  "web_search",
+  "fetch_webpage",
+  "run_code",
+];
+
+/** Grouped tool catalog (v0.3). Unknown tools fall into "Other". */
+export const TOOL_GROUPS = [
+  {
+    id: "communication",
+    label: "Communication",
+    tools: [
+      "send_message",
+      "send_message_to_agent_async",
+      "send_message_to_agent_and_wait_for_reply",
+      "send_message_to_agents_matching_tags",
+    ],
+  },
+  {
+    id: "memory",
+    label: "Memory",
+    tools: [
+      "memory",
+      "memory_insert",
+      "memory_replace",
+      "memory_rethink",
+      "memory_apply_patch",
+      "rethink_user_memory",
+    ],
+  },
+  {
+    id: "memory-search",
+    label: "Memory search & storage",
+    tools: ["search_memory", "store_memories", "conversation_search"],
+  },
+  {
+    id: "files",
+    label: "Files",
+    tools: ["open_files", "semantic_search_files", "grep_files"],
+  },
+  {
+    id: "web",
+    label: "Web",
+    tools: ["web_search", "fetch_webpage"],
+  },
+  {
+    id: "code",
+    label: "Code",
+    tools: ["run_code", "run_code_with_tools"],
+  },
+  {
+    id: "legacy",
+    label: "Legacy",
+    collapsedDefault: true,
+    legacy: true,
+    tools: [
+      "core_memory_append",
+      "core_memory_replace",
+      "archival_memory_insert",
+      "archival_memory_search",
+      "finish_rethinking_memory",
+      "memory_finish_edits",
+    ],
+  },
+];
+
+const GROUPED_NAMES = new Set(TOOL_GROUPS.flatMap((g) => g.tools));
+
+export function defaultToolIds(allTools) {
+  const want = new Set(DEFAULT_TOOL_NAMES);
+  return allTools.filter((t) => want.has(t.name)).map((t) => t.id);
+}
+
+export function buildToolSections(allTools) {
+  const byName = new Map(allTools.map((t) => [t.name, t]));
+  const used = new Set();
+
+  const sections = TOOL_GROUPS.map((group) => {
+    const tools = group.tools
+      .map((name) => byName.get(name))
+      .filter(Boolean);
+    tools.forEach((t) => used.add(t.name));
+    return { ...group, tools };
+  });
+
+  const other = allTools.filter((t) => !used.has(t.name));
+  if (other.length) {
+    sections.push({
+      id: "other",
+      label: "Other",
+      tools: other.sort((a, b) => (a.name || "").localeCompare(b.name || "")),
+    });
+  }
+
+  return sections;
+}
+
+export function filterByQuery(items, query, labelFn = (x) => x) {
+  const q = query.trim().toLowerCase();
+  if (!q) return items;
+  return items.filter((item) => labelFn(item).toLowerCase().includes(q));
+}

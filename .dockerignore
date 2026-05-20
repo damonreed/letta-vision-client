@@ -1,0 +1,9 @@
+.venv
+frontend/node_modules
+frontend/dist
+static
+__pycache__
+*.pyc
+.env
+*.egg-info
+wheels
