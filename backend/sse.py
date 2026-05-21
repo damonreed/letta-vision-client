@@ -1,5 +1,8 @@
 import json
+import logging
 from typing import Any, Iterator
+
+logger = logging.getLogger(__name__)
 
 
 def sse_event(event_type: str, data: dict[str, Any]) -> str:
@@ -164,10 +167,77 @@ class StreamCoalescer:
         return [sse_event("reasoning", base)]
 
 
+def _is_letta_error_body(body: object) -> bool:
+    return isinstance(body, dict) and body.get("message_type") == "error_message"
+
+
+def _friendly_stream_error_message(message: str, detail: str | None) -> str:
+    """Short operator-facing text; keep technical detail in the detail field."""
+    haystack = f"{message} {detail or ''}"
+    if "JSON error injected into SSE stream" in haystack:
+        return (
+            "The model provider sent a broken streaming response (OpenRouter/upstream). "
+            "This is usually temporary — try sending again."
+        )
+    if "Upstream idle timeout exceeded" in haystack:
+        return (
+            "The model stream timed out during a long response. "
+            "Try again, or use a shorter prompt / smaller image."
+        )
+    if detail and detail != message:
+        return message
+    return message or detail or "Stream error"
+
+
+def _sse_error_from_exception(exc: BaseException) -> str:
+    """Map letta-client stream failures (event: error) into bridge SSE."""
+    body = getattr(exc, "body", None)
+    message = str(exc) or "Stream error"
+    detail = None
+    error_type = "stream_error"
+    run_id = ""
+    if isinstance(body, dict):
+        message = body.get("message") or message
+        detail = body.get("detail")
+        error_type = body.get("error_type") or error_type
+        run_id = body.get("run_id") or run_id
+
+    friendly = _friendly_stream_error_message(message, detail)
+    if friendly == message:
+        detail = None if detail == message else detail
+    else:
+        detail = detail or message
+
+    return sse_event(
+        "error",
+        {
+            "message_type": "error_message",
+            "message": friendly,
+            "detail": detail,
+            "error_type": error_type,
+            "run_id": run_id,
+        },
+    )
+
+
 def stream_events(chunks: Iterator[Any]) -> Iterator[str]:
     coalescer = StreamCoalescer()
-    for chunk in chunks:
-        for event in coalescer.push(chunk):
+    try:
+        for chunk in chunks:
+            for event in coalescer.push(chunk):
+                yield event
+    except Exception as exc:
+        body = getattr(exc, "body", None)
+        if _is_letta_error_body(body):
+            logger.warning(
+                "Letta stream ended with error: %s",
+                body.get("message") or exc,
+            )
+        else:
+            logger.warning("Letta stream ended with error: %s", exc, exc_info=True)
+        for event in coalescer.finish():
             yield event
+        yield _sse_error_from_exception(exc)
+        return
     for event in coalescer.finish():
         yield event

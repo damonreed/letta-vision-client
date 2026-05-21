@@ -13,6 +13,13 @@
   } from "../lib/imagePipeline.ts";
   import AttachmentThumbnail from "../lib/components/AttachmentThumbnail.svelte";
   import ImageViewer from "../lib/components/ImageViewer.svelte";
+  import ToolResultImage from "../lib/components/ToolResultImage.svelte";
+  import {
+    getToolResultBlocks,
+    getToolResultDisplayImages,
+    getToolResultText,
+    redactToolResultDisplayText,
+  } from "../lib/toolResultImages.js";
   import ConversationList from "../lib/ConversationList.svelte";
   import {
     activeConversationId,
@@ -242,7 +249,23 @@
 
     let content = "";
     let contentBlocks = null;
-    if (m.content != null) {
+
+    if (role === "reasoning") {
+      content = extractReasoning(m);
+    } else if (role === "tool_result" || m.tool_return != null || m.tool_returns?.length) {
+      const blocks = getToolResultBlocks(m);
+      if (blocks) {
+        content = parseContent(blocks).text;
+      } else {
+        content = getToolResultText(m);
+        if (!content && m.tool_return != null) {
+          content =
+            typeof m.tool_return === "string"
+              ? m.tool_return
+              : JSON.stringify(m.tool_return, null, 2);
+        }
+      }
+    } else if (m.content != null) {
       if (typeof m.content === "string") {
         content = m.content;
       } else if (Array.isArray(m.content)) {
@@ -252,24 +275,19 @@
       } else {
         content = JSON.stringify(m.content, null, 2);
       }
-    } else if (m.reasoning) {
-      content = m.reasoning;
     } else if (m.tool_call) {
       content = JSON.stringify(m.tool_call, null, 2);
-    } else if (m.tool_return != null) {
-      if (typeof m.tool_return === "string") {
-        content = m.tool_return;
-      } else if (Array.isArray(m.tool_return)) {
-        const parsed = parseContent(m.tool_return);
-        content = parsed.text;
-        contentBlocks = m.tool_return;
-      } else {
-        content = JSON.stringify(m.tool_return, null, 2);
-      }
     }
+
+    const toolDisplayImages =
+      role === "tool_result" ? getToolResultDisplayImages(m) : [];
 
     const id = m.id || crypto.randomUUID();
     const systemCollapsed = role === "system" && agentId && !isSystemExpanded(agentId);
+
+    if (role === "tool_result" && content) {
+      content = redactToolResultDisplayText(content);
+    }
 
     return {
       id,
@@ -277,9 +295,11 @@
       type,
       content,
       contentBlocks,
+      toolDisplayImages,
       date: m.date,
       seq_id: m.seq_id ?? null,
-      collapsed: ["tool_call", "tool_result"].includes(role) || systemCollapsed,
+      collapsed:
+        ["tool_call", "tool_result", "reasoning"].includes(role) || systemCollapsed,
       systemSummary: role === "system" ? systemSummary(content) : null,
     };
   }
@@ -451,7 +471,21 @@
 
         if (event.type === "reasoning") {
           pendingReasoning += extractReasoning(event);
-          if (assistantIdx !== null) {
+          if (assistantIdx === null) {
+            const row = {
+              id: event.id
+                ? `${event.id}-reasoning`
+                : `stream-reasoning-${Date.now()}`,
+              role: "agent",
+              type: "assistant_message",
+              content: "",
+              reasoning: pendingReasoning,
+              date: event.date,
+              collapsed: false,
+            };
+            messages = withUniqueMessageIds([...messages, row]);
+            assistantIdx = messages.length - 1;
+          } else {
             messages[assistantIdx].reasoning = pendingReasoning;
             messages = [...messages];
           }
@@ -494,7 +528,11 @@
         } else if (event.type === "done") {
           break;
         } else if (event.type === "error") {
-          error = event.message || "Stream error";
+          error =
+            event.message ||
+            event.detail ||
+            (typeof event.error_type === "string" ? event.error_type : "") ||
+            "Stream error";
         }
       }
       if (!isCurrentStream(streamId)) return;
@@ -660,11 +698,9 @@
       <span class="time">{formatDate(msg.date)}</span>
     </div>
     {#if msg.reasoning}
-      <details class="reasoning" open={expanded[`r-${msg.id}`]}>
-        <summary onclick={() => toggleExpand(`r-${msg.id}`)}>
-          Reasoning
-        </summary>
-        <pre>{msg.reasoning}</pre>
+      <details class="reasoning">
+        <summary>Reasoning</summary>
+        <pre class="wrap">{msg.reasoning}</pre>
       </details>
     {/if}
     {#if msg.role === "system"}
@@ -676,22 +712,41 @@
           <pre class="system-body">{msg.content}</pre>
         {/if}
       </div>
+    {:else if msg.role === "reasoning"}
+      <details class="reasoning">
+        <summary>Reasoning</summary>
+        {#if msg.content}
+          <pre class="wrap">{msg.content}</pre>
+        {/if}
+      </details>
     {:else if msg.role === "tool_call" || msg.role === "tool_result"}
-      <details open={!msg.collapsed}>
+      {#if msg.role === "tool_result" && msg.toolDisplayImages?.length}
+        <div class="tool-result-images-visible" aria-label="Tool result images">
+          {#each msg.toolDisplayImages as item (item.key)}
+            {#if item.url}
+              <ToolResultImage url={item.url} onOpen={openViewer} />
+            {:else if item.src}
+              <button type="button" class="img-btn" onclick={() => openViewer(item.src)}>
+                <img
+                  src={item.src}
+                  alt="Generated image from tool"
+                  loading="lazy"
+                  decoding="async"
+                  referrerpolicy="no-referrer"
+                  class="inline-img tool-result-img"
+                />
+              </button>
+            {/if}
+          {/each}
+        </div>
+      {/if}
+      <details open={msg.role === "tool_result" ? false : !msg.collapsed}>
         <summary>{msg.role === "tool_call" ? "Tool call" : "Tool result"}</summary>
         {#if msg.contentBlocks?.length}
           <div class="content blocks">
             {#if msg.content}
               <pre class="wrap">{msg.content}</pre>
             {/if}
-            {#each msg.contentBlocks.filter((b) => b.type === "image") as img, i (i)}
-              {@const src = imageSrcFromBlock(img)}
-              {#if src}
-                <button type="button" class="img-btn" onclick={() => openViewer(src)}>
-                  <img src={src} alt="Tool result image" loading="lazy" decoding="async" referrerpolicy="no-referrer" class="inline-img" />
-                </button>
-              {/if}
-            {/each}
           </div>
         {:else}
           <pre class="wrap">{msg.content}</pre>
@@ -784,6 +839,15 @@
     max-width: 100%;
     background: #fafafa;
     border-style: dashed;
+  }
+  .tool-result-images-visible {
+    margin: 0.5rem 0 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .tool-result-img {
+    max-height: 420px;
   }
   .turn-group {
     display: flex;

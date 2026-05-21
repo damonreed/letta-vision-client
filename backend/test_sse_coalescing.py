@@ -69,6 +69,51 @@ class StreamCoalescerTests(unittest.TestCase):
         self.assertEqual(len(reasoning), 1)
         self.assertEqual(_parse_sse(reasoning[0])["reasoning"], "The user wants help.")
 
+    def test_stream_events_maps_client_error_to_sse(self):
+        class FakeStreamError(Exception):
+            def __init__(self):
+                super().__init__("Upstream idle timeout exceeded")
+                self.body = {
+                    "message_type": "error_message",
+                    "message": "An error occurred during agent execution.",
+                    "detail": "INVALID_ARGUMENT: OpenAI API error: Upstream idle timeout exceeded",
+                    "error_type": "llm_api_error",
+                    "run_id": "run-123",
+                }
+
+        def _chunks():
+            yield {"message_type": "assistant_message", "id": "a1", "content": "Hi"}
+            raise FakeStreamError()
+
+        events = list(stream_events(_chunks()))
+        err_events = [e for e in events if _parse_sse(e)["type"] == "error"]
+        self.assertEqual(len(err_events), 1)
+        payload = _parse_sse(err_events[0])
+        self.assertIn("timed out", payload["message"].lower())
+        self.assertTrue(payload.get("detail"))
+
+    def test_stream_events_maps_openrouter_sse_json_error(self):
+        class FakeStreamError(Exception):
+            def __init__(self):
+                super().__init__("JSON error injected into SSE stream")
+                self.body = {
+                    "message_type": "error_message",
+                    "message": "INVALID_ARGUMENT: OpenAI API error: JSON error injected into SSE stream",
+                    "detail": "INVALID_ARGUMENT: OpenAI API error: JSON error injected into SSE stream",
+                    "error_type": "llm_api_error",
+                    "run_id": "run-456",
+                }
+
+        class ErrIter:
+            def __iter__(self):
+                yield {"message_type": "assistant_message", "id": "a1", "content": "x"}
+                raise FakeStreamError()
+
+        events = list(stream_events(ErrIter()))
+        err = _parse_sse([e for e in events if _parse_sse(e)["type"] == "error"][0])
+        self.assertIn("broken streaming response", err["message"])
+        self.assertNotEqual(err.get("message"), err.get("detail"))
+
     def test_stream_events_wrapper(self):
         chunks = [
             {
