@@ -188,7 +188,9 @@
     try {
       const hist = await api.getHistory(id, convId);
       if (requestId !== historyRequest) return;
-      const normalized = sortMessagesChronological(hist.map(normalizeMessage));
+      const normalized = sortMessagesChronological(
+        hist.map(normalizeMessage).filter(Boolean)
+      );
       messages = withUniqueMessageIds(normalized);
       stickToBottom = true;
       await scrollToBottom();
@@ -276,7 +278,27 @@
     }
   }
 
+  /** Legacy stream appended a second assistant chunk with fenced JSON; strip from main text. */
+  function stripEmbeddedFailureJsonFence(text) {
+    if (!text || typeof text !== "string") return text;
+    const marker = "```json";
+    const idx = text.indexOf(marker);
+    if (idx === -1) return text;
+    const before = text.slice(0, idx).trimEnd();
+    return before || text;
+  }
+
+  function isLegacyInjectedJsonStreamMessage(event) {
+    const id = event?.id || "";
+    if (typeof id === "string" && id.endsWith("-injected-json")) return true;
+    const content = typeof event?.content === "string" ? event.content : "";
+    return content.trimStart().startsWith("```json");
+  }
+
   function normalizeMessage(m) {
+    if (typeof m?.id === "string" && m.id.endsWith("-injected-json")) {
+      return null;
+    }
     const failureNotice = unpackLlmFailureNotice(m);
     const injectedJson = llmFailureInjectedJson(m);
     const type = m.message_type || "unknown";
@@ -310,7 +332,7 @@
         }
       }
     } else if (failureNotice) {
-      content = failureNotice;
+      content = stripEmbeddedFailureJsonFence(failureNotice);
     } else if (type === "error_message") {
       content = m.message || m.content || "";
     } else if (type === "summary_message" && typeof m.summary === "string") {
@@ -347,7 +369,10 @@
       contentBlocks,
       toolDisplayImages,
       injectedContextJson: injectedJson,
-      errorDetail: type === "error_message" ? m.detail : null,
+      errorDetail:
+        type === "error_message"
+          ? m.upstream_error || m.detail || null
+          : null,
       date: m.date,
       seq_id: m.seq_id ?? null,
       collapsed:
@@ -542,6 +567,9 @@
             messages = [...messages];
           }
         } else if (event.type === "message") {
+          if (isLegacyInjectedJsonStreamMessage(event)) {
+            continue;
+          }
           const chunk =
             typeof event.content === "string"
               ? event.content
@@ -561,21 +589,28 @@
             messages = withUniqueMessageIds([...messages, row]);
             assistantIdx = messages.length - 1;
           } else {
-            messages[assistantIdx].content += chunk || "";
+            const merged = (messages[assistantIdx].content || "") + (chunk || "");
+            messages[assistantIdx].content = stripEmbeddedFailureJsonFence(merged);
             messages = [...messages];
           }
         } else if (event.type === "tool_call") {
-          messages = withUniqueMessageIds([
-            ...messages,
-            normalizeMessage({ ...event, message_type: "tool_call_message" }),
-          ]);
+          const toolCallRow = normalizeMessage({
+            ...event,
+            message_type: "tool_call_message",
+          });
+          if (toolCallRow) {
+            messages = withUniqueMessageIds([...messages, toolCallRow]);
+          }
           assistantIdx = null;
           pendingReasoning = "";
         } else if (event.type === "tool_result") {
-          messages = withUniqueMessageIds([
-            ...messages,
-            normalizeMessage({ ...event, message_type: "tool_return_message" }),
-          ]);
+          const toolResultRow = normalizeMessage({
+            ...event,
+            message_type: "tool_return_message",
+          });
+          if (toolResultRow) {
+            messages = withUniqueMessageIds([...messages, toolResultRow]);
+          }
           assistantIdx = null;
         } else if (event.type === "done") {
           break;
@@ -586,6 +621,7 @@
             (typeof event.error_type === "string" ? event.error_type : "") ||
             "Stream error";
           error = errText;
+          const rawUpstream = event.upstream_error || event.detail || null;
           messages = withUniqueMessageIds([
             ...messages,
             {
@@ -593,7 +629,7 @@
               role: "error",
               type: "error_message",
               content: errText,
-              errorDetail: event.detail || null,
+              errorDetail: rawUpstream,
               date: event.date || new Date().toISOString(),
               collapsed: false,
             },
@@ -821,7 +857,7 @@
       <div class="content error-text">{msg.content}</div>
       {#if msg.errorDetail && msg.errorDetail !== msg.content}
         <details class="injected-context">
-          <summary>Error detail</summary>
+          <summary>Upstream error (raw)</summary>
           <pre class="wrap">{msg.errorDetail}</pre>
         </details>
       {/if}
@@ -829,7 +865,10 @@
       <div class="content md">{@html renderMarkdown(msg.content)}</div>
       {#if msg.injectedContextJson}
         <details class="injected-context">
-          <summary>Injected context (JSON)</summary>
+          <summary>Provider failure record (JSON)</summary>
+          <p class="injected-context-hint">
+            Structured notice added to agent memory after a failed step — not the upstream SSE parse error.
+          </p>
           <pre class="wrap">{msg.injectedContextJson}</pre>
         </details>
       {/if}
@@ -917,6 +956,11 @@
   .injected-context {
     margin-top: 0.5rem;
     font-size: 0.85rem;
+  }
+  .injected-context-hint {
+    margin: 0.25rem 0 0.5rem;
+    color: #666;
+    font-size: 0.8rem;
   }
   .injected-context pre {
     max-height: 240px;

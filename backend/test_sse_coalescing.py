@@ -133,6 +133,7 @@ class StreamCoalescerTests(unittest.TestCase):
         err = _parse_sse([e for e in events if _parse_sse(e)["type"] == "error"][0])
         self.assertIn("broken streaming response", err["message"])
         self.assertNotEqual(err.get("message"), err.get("detail"))
+        self.assertIn("JSON error injected", err.get("upstream_error", ""))
 
     def test_stream_events_wrapper(self):
         chunks = [

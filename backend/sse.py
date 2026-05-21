@@ -217,21 +217,22 @@ def _sse_error_from_exception(exc: BaseException) -> str:
         run_id = body.get("run_id") or run_id
 
     friendly = _friendly_stream_error_message(message, detail)
+    raw_upstream = detail or message
     if friendly == message:
         detail = None if detail == message else detail
     else:
-        detail = detail or message
+        detail = raw_upstream
 
-    return sse_event(
-        "error",
-        {
-            "message_type": "error_message",
-            "message": friendly,
-            "detail": detail,
-            "error_type": error_type,
-            "run_id": run_id,
-        },
-    )
+    payload: dict[str, Any] = {
+        "message_type": "error_message",
+        "message": friendly,
+        "detail": detail,
+        "error_type": error_type,
+        "run_id": run_id,
+    }
+    if raw_upstream and raw_upstream != friendly:
+        payload["upstream_error"] = raw_upstream
+    return sse_event("error", payload)
 
 
 def stream_events(chunks: Iterator[Any]) -> Iterator[str]:
