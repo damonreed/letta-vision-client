@@ -236,11 +236,55 @@
     return `System context (${blocks} memory blocks, ${text.length} chars)`;
   }
 
+  function unpackLlmFailurePacked(raw) {
+    if (!raw) return null;
+    try {
+      const packed = JSON.parse(raw);
+      if (
+        packed?.type === "system_alert" &&
+        (packed.llm_failure_stats || packed.degraded_failure_stats)
+      ) {
+        return packed;
+      }
+    } catch {
+      /* not packed JSON */
+    }
+    return null;
+  }
+
+  function unpackLlmFailureNotice(m) {
+    if (m?.llm_failure_stats || m?.degraded_failure_stats) {
+      return typeof m.summary === "string" ? m.summary : null;
+    }
+    let raw = null;
+    if (typeof m?.content === "string") raw = m.content;
+    else if (Array.isArray(m?.content) && m.content[0]?.text) raw = m.content[0].text;
+    const packed = unpackLlmFailurePacked(raw);
+    return packed?.message || null;
+  }
+
+  function llmFailureInjectedJson(m) {
+    let raw = null;
+    if (typeof m?.content === "string") raw = m.content;
+    else if (Array.isArray(m?.content) && m.content[0]?.text) raw = m.content[0].text;
+    const packed = unpackLlmFailurePacked(raw);
+    if (!packed) return null;
+    try {
+      return JSON.stringify(packed, null, 2);
+    } catch {
+      return raw;
+    }
+  }
+
   function normalizeMessage(m) {
+    const failureNotice = unpackLlmFailureNotice(m);
+    const injectedJson = llmFailureInjectedJson(m);
     const type = m.message_type || "unknown";
     let role = "system";
-    if (type === "user_message") role = "user";
-    else if (type === "assistant_message") role = "agent";
+    if (type === "error_message") role = "error";
+    else if (failureNotice) role = "agent";
+    else if (type === "user_message") role = "user";
+    else if (type === "assistant_message" || type === "summary_message") role = "agent";
     else if (type === "tool_call_message") role = "tool_call";
     else if (type === "tool_return_message") role = "tool_result";
     else if (type === "reasoning_message" || type === "hidden_reasoning_message")
@@ -265,6 +309,12 @@
               : JSON.stringify(m.tool_return, null, 2);
         }
       }
+    } else if (failureNotice) {
+      content = failureNotice;
+    } else if (type === "error_message") {
+      content = m.message || m.content || "";
+    } else if (type === "summary_message" && typeof m.summary === "string") {
+      content = m.summary;
     } else if (m.content != null) {
       if (typeof m.content === "string") {
         content = m.content;
@@ -296,6 +346,8 @@
       content,
       contentBlocks,
       toolDisplayImages,
+      injectedContextJson: injectedJson,
+      errorDetail: type === "error_message" ? m.detail : null,
       date: m.date,
       seq_id: m.seq_id ?? null,
       collapsed:
@@ -528,11 +580,24 @@
         } else if (event.type === "done") {
           break;
         } else if (event.type === "error") {
-          error =
+          const errText =
             event.message ||
             event.detail ||
             (typeof event.error_type === "string" ? event.error_type : "") ||
             "Stream error";
+          error = errText;
+          messages = withUniqueMessageIds([
+            ...messages,
+            {
+              id: event.run_id ? `${event.run_id}-error` : `stream-error-${Date.now()}`,
+              role: "error",
+              type: "error_message",
+              content: errText,
+              errorDetail: event.detail || null,
+              date: event.date || new Date().toISOString(),
+              collapsed: false,
+            },
+          ]);
         }
       }
       if (!isCurrentStream(streamId)) return;
@@ -752,8 +817,22 @@
           <pre class="wrap">{msg.content}</pre>
         {/if}
       </details>
+    {:else if msg.role === "error"}
+      <div class="content error-text">{msg.content}</div>
+      {#if msg.errorDetail && msg.errorDetail !== msg.content}
+        <details class="injected-context">
+          <summary>Error detail</summary>
+          <pre class="wrap">{msg.errorDetail}</pre>
+        </details>
+      {/if}
     {:else if msg.role === "agent"}
       <div class="content md">{@html renderMarkdown(msg.content)}</div>
+      {#if msg.injectedContextJson}
+        <details class="injected-context">
+          <summary>Injected context (JSON)</summary>
+          <pre class="wrap">{msg.injectedContextJson}</pre>
+        </details>
+      {/if}
     {:else if msg.contentBlocks?.length}
       <div class="content blocks">
         {#if msg.content}
@@ -826,6 +905,25 @@
   .msg.user {
     align-self: flex-end;
     background: #eff6ff;
+  }
+  .msg.error {
+    border-left: 3px solid #c62828;
+    background: #ffebee;
+  }
+  .error-text {
+    color: #b71c1c;
+    font-weight: 500;
+  }
+  .injected-context {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+  }
+  .injected-context pre {
+    max-height: 240px;
+    overflow: auto;
+    background: #f5f5f5;
+    padding: 0.5rem;
+    border-radius: 4px;
   }
   .msg.agent {
     align-self: flex-start;

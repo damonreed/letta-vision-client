@@ -24,12 +24,26 @@ def _map_terminal_chunk(dumped: dict[str, Any]) -> str | None:
 
     if message_type == "assistant_message":
         return sse_event("message", dumped)
+    if message_type == "summary_message":
+        summary = dumped.get("summary")
+        if summary:
+            dumped = {**dumped, "content": summary, "message_type": "assistant_message"}
+        return sse_event("message", dumped)
     if message_type == "tool_return_message":
         return sse_event("tool_result", dumped)
     if message_type == "stop_reason":
         return sse_event("done", dumped)
     if message_type == "error_message":
-        return sse_event("error", dumped)
+        return sse_event(
+            "error",
+            {
+                **dumped,
+                "message": _friendly_stream_error_message(
+                    dumped.get("message") or "",
+                    dumped.get("detail"),
+                ),
+            },
+        )
     if message_type in ("ping", "usage_statistics", "user_message", "system_message"):
         return None
     if message_type in ("approval_request_message", "approval_response_message"):

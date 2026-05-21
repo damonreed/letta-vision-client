@@ -69,6 +69,26 @@ class StreamCoalescerTests(unittest.TestCase):
         self.assertEqual(len(reasoning), 1)
         self.assertEqual(_parse_sse(reasoning[0])["reasoning"], "The user wants help.")
 
+    def test_summary_message_maps_to_assistant_sse(self):
+        events = list(
+            stream_events(
+                iter(
+                    [
+                        {
+                            "message_type": "summary_message",
+                            "id": "s1",
+                            "summary": "Provider failed after 3 attempts.",
+                        }
+                    ]
+                )
+            )
+        )
+        msg_events = [e for e in events if _parse_sse(e)["type"] == "message"]
+        self.assertEqual(len(msg_events), 1)
+        parsed = _parse_sse(msg_events[0])
+        self.assertEqual(parsed["content"], "Provider failed after 3 attempts.")
+        self.assertEqual(parsed["message_type"], "assistant_message")
+
     def test_stream_events_maps_client_error_to_sse(self):
         class FakeStreamError(Exception):
             def __init__(self):
