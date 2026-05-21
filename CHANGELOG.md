@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-21
+
+### Added
+
+- MCP server management tab: list, connect (OAuth SSE), refresh tools, per-agent tool attach (`Mcp.svelte`, `mcpHelpers.js`).
+- SSE summary message mapping and display in chat.
+- Tool-result and reasoning rendering in chat, including images returned from tools.
+
+### Changed
+
+- SSE error handling: upstream error context, legacy injected-JSON compatibility, clearer error detail in `Chat.svelte`.
+- Backend SSE coalescing and error propagation tests extended.
+
+### Fixed
+
+- Stream error logging and user-facing feedback for common upstream failure modes.
+
 ## [0.3.0] - 2026-05-20
 
 ### Added
@@ -50,7 +67,8 @@ Pre-vision baseline: text chat bridge; smoke script for multimodal API only.
 - Docker image and standalone `docker-compose.yml`.
 - Stress-test scripts for empirical limit discovery.
 
-[Unreleased]: https://github.com/damonreed/letta-vision-client/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/damonreed/letta-vision-client/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.4.0
 [0.3.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.3.0
 [0.2.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.2.0
 [0.1.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.1.0
