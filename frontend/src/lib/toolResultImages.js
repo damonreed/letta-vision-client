@@ -1,15 +1,15 @@
 /**
- * Tool-result image extraction for MCP tools (ZapImage, etc.).
+ * Tool-result images for MCP tools (ZapImage, etc.).
+ * Display policy: if the model sees inline image bytes, the user sees them too —
+ * no signed-URL fetch or URL-based previews in chat history.
  */
 
-import { imageSrcFromBlock } from "./contentBlocks.js";
 
 function blockDedupeKey(block) {
   if (!block || typeof block !== "object") return "";
   if (block.type === "image") {
     const src = block.source || {};
     if (src.data) return `img:data:${src.data.length}:${src.data.slice(0, 64)}`;
-    if (src.url) return `img:url:${src.url}`;
   }
   if (block.type === "text") return `text:${(block.text || "").slice(0, 256)}`;
   return JSON.stringify(block).slice(0, 128);
@@ -27,6 +27,13 @@ function dedupeContentBlocks(blocks) {
   return out;
 }
 
+/** Inline base64 only — URLs are not shown in chat history. */
+function imageDataUrlFromToolBlock(block) {
+  const src = block?.source;
+  if (!src?.data || !src?.media_type) return null;
+  return `data:${src.media_type};base64,${src.data}`;
+}
+
 /** Prefer multimodal blocks from tool_returns; never merge duplicate top-level copies. */
 export function getToolResultBlocks(rawMessage) {
   const tr0 = rawMessage?.tool_returns?.[0]?.tool_return;
@@ -35,7 +42,7 @@ export function getToolResultBlocks(rawMessage) {
   return null;
 }
 
-/** Text payload for JSON / URL fallback (packaged or raw). */
+/** Text parts only (excludes image blocks). */
 export function getToolResultText(rawMessage) {
   const blocks = getToolResultBlocks(rawMessage);
   if (blocks) {
@@ -48,53 +55,11 @@ export function getToolResultText(rawMessage) {
   return "";
 }
 
-/**
- * Extract image URLs from ZapImage-style MCP tool returns (JSON in tool_result text).
- */
-export function extractImageUrlsFromToolResult(content) {
-  if (!content || typeof content !== "string") return [];
-  const urls = [];
-
-  let text = content;
-  try {
-    const outer = JSON.parse(content.trim());
-    if (outer?.message != null) {
-      text =
-        typeof outer.message === "string"
-          ? outer.message
-          : JSON.stringify(outer.message);
-    }
-  } catch {
-    /* not packaged JSON */
-  }
-
-  const jsonChunk = text.split("\n\n[")[0].trim();
-  try {
-    const payload = JSON.parse(jsonChunk);
-    if (payload?.images && Array.isArray(payload.images)) {
-      for (const item of payload.images) {
-        if (item?.url && typeof item.url === "string") urls.push(item.url);
-      }
-    }
-  } catch {
-    /* not JSON */
-  }
-
-  const urlRe = /https?:\/\/[^\s"'<>]+\.(?:png|jpe?g|webp|gif)(?:\?[^\s"'<>]*)?/gi;
-  for (const m of text.matchAll(urlRe)) {
-    if (!urls.includes(m[0])) urls.push(m[0]);
-  }
-
-  return urls;
-}
-
-function imageDisplayFingerprint(item) {
-  if (item.src?.startsWith("data:")) {
-    const comma = item.src.indexOf(",");
-    const payload = comma >= 0 ? item.src.slice(comma + 1) : item.src;
-    return `b64:${payload.length}:${payload.slice(0, 64)}`;
-  }
-  return item.url || item.src || "";
+function imageDisplayFingerprint(src) {
+  if (!src?.startsWith("data:")) return src || "";
+  const comma = src.indexOf(",");
+  const payload = comma >= 0 ? src.slice(comma + 1) : src;
+  return `b64:${payload.length}:${payload.slice(0, 64)}`;
 }
 
 /**
@@ -102,45 +67,33 @@ function imageDisplayFingerprint(item) {
  */
 export function redactToolResultDisplayText(text) {
   if (!text || typeof text !== "string") return text;
-  return text
+  let out = text
     .replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/gi, "[image base64 omitted]")
     .replace(/"data"\s*:\s*"[A-Za-z0-9+/=]{200,}"/g, '"data": "[omitted]"')
     .replace(/type=['"]image['"][^'"]*data=['"][A-Za-z0-9+/=]{100,}['"]/gi, "[image omitted]");
+  out = out.replace(/\s*\[Image omitted\]/gi, "").replace(/\s*\[\d+ images omitted\]/gi, "");
+  out = out.replace(/https?:\/\/storage\.googleapis\.com[^\s"'<>]*/gi, "[image url omitted]");
+  return out;
 }
 
 /**
- * Images to show in the tool-result UI: inline base64 blocks first, else proxied URLs.
- * @returns {{ key: string, src?: string, url?: string }[]}
+ * Images to show in tool-result UI: inline base64 blocks only (same bytes the model gets).
+ * @returns {{ key: string, src: string }[]}
  */
 export function getToolResultDisplayImages(rawMessage) {
   const out = [];
   const seen = new Set();
   const blocks = getToolResultBlocks(rawMessage);
-  if (blocks) {
-    for (const block of blocks) {
-      if (block?.type !== "image") continue;
-      const src = imageSrcFromBlock(block);
-      if (!src) continue;
-      const item = {
-        key: `block-${seen.size}`,
-        src,
-        url: src.startsWith("http") ? src : undefined,
-      };
-      const fp = imageDisplayFingerprint(item);
-      if (seen.has(fp)) continue;
-      seen.add(fp);
-      out.push(item);
-    }
-  }
+  if (!blocks) return out;
 
-  // Inline image blocks win; never also fetch the JSON URL (duplicate preview).
-  if (out.length === 0) {
-    const text = getToolResultText(rawMessage);
-    for (const url of extractImageUrlsFromToolResult(text)) {
-      if (seen.has(url)) continue;
-      seen.add(url);
-      out.push({ key: `url-${seen.size}`, url, src: null });
-    }
+  for (const block of blocks) {
+    if (block?.type !== "image") continue;
+    const src = imageDataUrlFromToolBlock(block);
+    if (!src) continue;
+    const fp = imageDisplayFingerprint(src);
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    out.push({ key: `block-${out.length}`, src });
   }
 
   return out;

@@ -13,7 +13,6 @@
   } from "../lib/imagePipeline.ts";
   import AttachmentThumbnail from "../lib/components/AttachmentThumbnail.svelte";
   import ImageViewer from "../lib/components/ImageViewer.svelte";
-  import ToolResultImage from "../lib/components/ToolResultImage.svelte";
   import {
     getToolResultBlocks,
     getToolResultDisplayImages,
@@ -824,20 +823,15 @@
       {#if msg.role === "tool_result" && msg.toolDisplayImages?.length}
         <div class="tool-result-images-visible" aria-label="Tool result images">
           {#each msg.toolDisplayImages as item (item.key)}
-            {#if item.url}
-              <ToolResultImage url={item.url} onOpen={openViewer} />
-            {:else if item.src}
-              <button type="button" class="img-btn" onclick={() => openViewer(item.src)}>
-                <img
-                  src={item.src}
-                  alt="Generated image from tool"
-                  loading="lazy"
-                  decoding="async"
-                  referrerpolicy="no-referrer"
-                  class="inline-img tool-result-img"
-                />
-              </button>
-            {/if}
+            <button type="button" class="img-btn" onclick={() => openViewer(item.src)}>
+              <img
+                src={item.src}
+                alt="Generated image from tool"
+                loading="lazy"
+                decoding="async"
+                class="inline-img tool-result-img"
+              />
+            </button>
           {/each}
         </div>
       {/if}
