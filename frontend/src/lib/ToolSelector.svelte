@@ -2,20 +2,34 @@
   import { api } from "./api.js";
   import { buildToolSections } from "./tools.js";
 
-  /** @type {{ allTools: any[], selectedIds?: string[], agentId?: string | null, onError?: (msg: string) => void }} */
+  /** @type {{ allTools: any[], selectedIds?: string[], agentId?: string | null, onError?: (msg: string) => void, layout?: 'grid' | 'master-detail' }} */
   let {
     allTools = [],
     selectedIds = $bindable([]),
     agentId = null,
     onError = (msg) => {},
+    layout = "grid",
   } = $props();
 
   const attachMode = $derived(!!agentId);
 
-  let collapsed = $state({});
+  let selectedSectionId = $state(null);
   let pending = $state(new Set());
 
   const sections = $derived(buildToolSections(allTools));
+  const visibleSections = $derived(sections.filter((s) => s.tools.length > 0));
+
+  let selectedSection = $derived(
+    visibleSections.find((s) => s.id === selectedSectionId) ?? null,
+  );
+
+  $effect(() => {
+    if (!visibleSections.length) {
+      selectedSectionId = null;
+    } else if (!visibleSections.some((s) => s.id === selectedSectionId)) {
+      selectedSectionId = visibleSections[0].id;
+    }
+  });
 
   function isChecked(toolId) {
     return selectedIds.includes(toolId);
@@ -31,13 +45,8 @@
     }
   }
 
-  function toggleSection(id) {
-    collapsed = { ...collapsed, [id]: !collapsed[id] };
-  }
-
-  function sectionCollapsed(section) {
-    if (collapsed[section.id] !== undefined) return collapsed[section.id];
-    return !!section.collapsedDefault;
+  function attachedCount(section) {
+    return section.tools.filter((t) => isChecked(t.id)).length;
   }
 
   async function onCheckboxChange(tool, checked) {
@@ -61,7 +70,7 @@
       onError(
         checked
           ? `Failed to attach tool: ${err.message}`
-          : `Failed to detach tool: ${err.message}`
+          : `Failed to detach tool: ${err.message}`,
       );
     } finally {
       const next = new Set(pending);
@@ -71,47 +80,146 @@
   }
 </script>
 
-<div class="tool-selector">
-  {#each sections as section (section.id)}
-    {#if section.tools.length}
-      {#if section.legacy}
-        <div class="section-header legacy">
-          <button
-            type="button"
-            class="section-toggle"
-            onclick={() => toggleSection(section.id)}
-          >
-            Legacy tools ({section.tools.length})
-            {sectionCollapsed(section) ? "[show]" : "[hide]"}
-          </button>
-        </div>
-      {:else}
-        <div class="section-header">{section.label}</div>
-      {/if}
-      {#if !sectionCollapsed(section)}
-        <div class="tools-grid" class:legacy={section.legacy}>
-          {#each section.tools as tool (tool.id)}
-            <label class="tool-check">
-              <input
-                type="checkbox"
-                checked={isChecked(tool.id)}
-                disabled={pending.has(tool.id)}
-                onchange={(e) => onCheckboxChange(tool, e.currentTarget.checked)}
-              />
-              <span>{tool.name || tool.id}</span>
-            </label>
+{#if layout === "master-detail"}
+  <div class="tool-selector master-detail-layout">
+    {#if visibleSections.length === 0}
+      <p class="empty">No tools available.</p>
+    {:else}
+      <div class="master-detail">
+        <nav class="category-list" aria-label="Tool categories">
+          {#each visibleSections as section (section.id)}
+            {@const attached = attachedCount(section)}
+            <button
+              type="button"
+              class:selected={section.id === selectedSectionId}
+              onclick={() => (selectedSectionId = section.id)}
+            >
+              <span class="category-label">{section.label}</span>
+              <span class="category-meta">
+                {attached}/{section.tools.length}
+              </span>
+            </button>
           {/each}
-        </div>
-      {/if}
+        </nav>
+
+        {#if selectedSection}
+          <div class="tools-panel">
+            <div class="tools-panel-header">{selectedSection.label}</div>
+            <div class="tools-list">
+              {#each selectedSection.tools as tool (tool.id)}
+                <label class="tool-check">
+                  <input
+                    type="checkbox"
+                    checked={isChecked(tool.id)}
+                    disabled={pending.has(tool.id)}
+                    onchange={(e) => onCheckboxChange(tool, e.currentTarget.checked)}
+                  />
+                  <span>{tool.name || tool.id}</span>
+                </label>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
     {/if}
-  {/each}
-</div>
+  </div>
+{:else}
+  <div class="tool-selector">
+    {#each visibleSections as section (section.id)}
+      <div class="section-header">{section.label}</div>
+      <div class="tools-grid">
+        {#each section.tools as tool (tool.id)}
+          <label class="tool-check">
+            <input
+              type="checkbox"
+              checked={isChecked(tool.id)}
+              disabled={pending.has(tool.id)}
+              onchange={(e) => onCheckboxChange(tool, e.currentTarget.checked)}
+            />
+            <span>{tool.name || tool.id}</span>
+          </label>
+        {/each}
+      </div>
+    {/each}
+  </div>
+{/if}
 
 <style>
   .tool-selector {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    height: 100%;
+    min-height: 0;
+  }
+  .master-detail-layout {
+    flex: 1;
+  }
+  .master-detail {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    flex: 1;
+    min-height: 0;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .category-list {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    border-right: 1px solid #e5e7eb;
+    background: #fafafa;
+  }
+  .category-list button {
+    width: 100%;
+    text-align: left;
+    padding: 0.55rem 0.75rem;
+    border: none;
+    background: none;
+    border-bottom: 1px solid #f0f0f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+  .category-list button:hover {
+    background: #f3f4f6;
+  }
+  .category-list button.selected {
+    background: #eff6ff;
+  }
+  .category-label {
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+  .category-meta {
+    font-size: 0.7rem;
+    color: #888;
+    flex-shrink: 0;
+  }
+  .tools-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .tools-panel-header {
+    flex-shrink: 0;
+    padding: 0.6rem 1rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #374151;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .tools-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
   }
   .section-header {
     font-size: 0.8rem;
@@ -119,31 +227,10 @@
     color: #374151;
     margin: 0.25rem 0 0;
   }
-  .section-header.legacy {
-    font-weight: 400;
-  }
-  .section-toggle {
-    background: none;
-    border: none;
-    padding: 0;
-    font-size: 0.8rem;
-    color: #6b7280;
-    cursor: pointer;
-  }
-  .section-toggle:hover {
-    color: #374151;
-    text-decoration: underline;
-  }
   .tools-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.35rem 1rem;
-  }
-  .tools-grid.legacy {
-    opacity: 0.85;
-  }
-  .tools-grid.legacy .tool-check span {
-    color: #6b7280;
   }
   .tool-check {
     display: flex;
@@ -160,5 +247,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .empty {
+    color: #888;
+    margin: 1rem 0;
   }
 </style>

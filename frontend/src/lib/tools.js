@@ -32,6 +32,12 @@ export const TOOL_GROUPS = [
       "memory_rethink",
       "memory_apply_patch",
       "rethink_user_memory",
+      "core_memory_append",
+      "core_memory_replace",
+      "archival_memory_insert",
+      "archival_memory_search",
+      "finish_rethinking_memory",
+      "memory_finish_edits",
     ],
   },
   {
@@ -53,20 +59,6 @@ export const TOOL_GROUPS = [
     id: "code",
     label: "Code",
     tools: ["run_code", "run_code_with_tools"],
-  },
-  {
-    id: "legacy",
-    label: "Legacy",
-    collapsedDefault: true,
-    legacy: true,
-    tools: [
-      "core_memory_append",
-      "core_memory_replace",
-      "archival_memory_insert",
-      "archival_memory_search",
-      "finish_rethinking_memory",
-      "memory_finish_edits",
-    ],
   },
 ];
 

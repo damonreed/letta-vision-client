@@ -13,6 +13,7 @@
 
   let blockEdits = $state({});
   let blockAgents = $state({});
+  let selectedBlockId = $state(null);
   let showCreate = $state(false);
   let showAttach = $state(false);
   let attachSearch = $state("");
@@ -29,9 +30,18 @@
     read_only: false,
   });
 
+  let selectedBlock = $derived(
+    blocks.find((b) => b.id === selectedBlockId) ?? null,
+  );
+
   $effect(() => {
     blockEdits = Object.fromEntries(blocks.map((b) => [b.id, b.value ?? ""]));
     loadBlockAgents(blocks);
+    if (!blocks.length) {
+      selectedBlockId = null;
+    } else if (!blocks.some((b) => b.id === selectedBlockId)) {
+      selectedBlockId = blocks[0].id;
+    }
   });
 
   async function loadBlockAgents(blockList) {
@@ -86,6 +96,7 @@
       });
       await api.attachBlock(agentId, created.id);
       showCreate = false;
+      selectedBlockId = created.id;
       await onReload();
     } catch (err) {
       createError = err.message;
@@ -142,6 +153,7 @@
     try {
       await api.attachBlock(agentId, blockId);
       showAttach = false;
+      selectedBlockId = blockId;
       await onReload();
     } catch (err) {
       attachError = err.message;
@@ -163,8 +175,9 @@
 
   async function confirmDetach() {
     if (!detachTarget) return;
+    const detachedId = detachTarget.id;
     try {
-      await api.detachBlock(agentId, detachTarget.id);
+      await api.detachBlock(agentId, detachedId);
       detachTarget = null;
       await onReload();
     } catch (err) {
@@ -180,50 +193,75 @@
   }
 </script>
 
-<div class="blocks-section">
-  <div class="blocks-header">
-    <h3>Memory blocks</h3>
-    <div class="blocks-actions">
-      <button type="button" onclick={openCreate}>+ Create block</button>
-      <button type="button" class="muted" onclick={openAttach}>+ Attach existing</button>
-    </div>
+<div class="blocks-workspace">
+  <div class="blocks-toolbar">
+    <button type="button" onclick={openCreate}>+ Create block</button>
+    <button type="button" class="muted" onclick={openAttach}>+ Attach existing</button>
   </div>
 
-  {#each blocks as block (block.id)}
-    {@const others = blockAgents[block.id] || []}
-    <div class="block-card">
-      <div class="block-card-header">
-        <span class="block-label">{block.label}</span>
-        {#if block.read_only}
-          <span class="read-only-badge" title="Read-only — managed elsewhere">🔒 Read-only</span>
-        {/if}
-        {#if others.length > 0}
-          <span
-            class="shared-badge"
-            title={others.map((a) => a.name || a.id).join(", ")}
+  {#if blocks.length === 0}
+    <p class="empty">No memory blocks attached. Create or attach one to get started.</p>
+  {:else}
+    <div class="master-detail">
+      <nav class="block-list" aria-label="Memory blocks">
+        {#each blocks as block (block.id)}
+          {@const others = blockAgents[block.id] || []}
+          <button
+            type="button"
+            class:selected={block.id === selectedBlockId}
+            onclick={() => (selectedBlockId = block.id)}
           >
-            Shared with {others.length} other agent{others.length === 1 ? "" : "s"}
-          </span>
-        {/if}
-      </div>
-      {#if block.description}
-        <p class="block-desc">{block.description}</p>
+            <span class="block-label">{block.label}</span>
+            <span class="block-list-meta">
+              {#if block.read_only}🔒{/if}
+              {#if others.length > 0}
+                · shared
+              {/if}
+            </span>
+          </button>
+        {/each}
+      </nav>
+
+      {#if selectedBlock}
+        {@const others = blockAgents[selectedBlock.id] || []}
+        <div class="block-editor">
+          <div class="block-card-header">
+            <span class="block-label">{selectedBlock.label}</span>
+            {#if selectedBlock.read_only}
+              <span class="read-only-badge" title="Read-only — managed elsewhere">
+                🔒 Read-only
+              </span>
+            {/if}
+            {#if others.length > 0}
+              <span
+                class="shared-badge"
+                title={others.map((a) => a.name || a.id).join(", ")}
+              >
+                Shared with {others.length} other agent{others.length === 1 ? "" : "s"}
+              </span>
+            {/if}
+            <span class="char-meta">{charCount(selectedBlock)}</span>
+          </div>
+          {#if selectedBlock.description}
+            <p class="block-desc">{selectedBlock.description}</p>
+          {/if}
+          <textarea
+            class="block-textarea"
+            bind:value={blockEdits[selectedBlock.id]}
+            disabled={selectedBlock.read_only}
+          ></textarea>
+          <div class="block-actions">
+            {#if !selectedBlock.read_only}
+              <button type="button" onclick={() => saveBlock(selectedBlock)}>Save</button>
+            {/if}
+            <button type="button" class="muted" onclick={() => requestDetach(selectedBlock)}>
+              Detach
+            </button>
+          </div>
+        </div>
       {/if}
-      <textarea
-        bind:value={blockEdits[block.id]}
-        rows="4"
-        disabled={block.read_only}
-      ></textarea>
-      <div class="block-actions">
-        {#if !block.read_only}
-          <button type="button" onclick={() => saveBlock(block)}>Save</button>
-        {/if}
-        <button type="button" class="muted" onclick={() => requestDetach(block)}>
-          Detach
-        </button>
-      </div>
     </div>
-  {/each}
+  {/if}
 </div>
 
 {#if showCreate}
@@ -359,34 +397,67 @@
 {/if}
 
 <style>
-  .blocks-section {
-    margin-top: 1.5rem;
-  }
-  .blocks-header {
+  .blocks-workspace {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 0.75rem;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
   }
-  .blocks-header h3 {
-    margin: 0;
-  }
-  .blocks-actions {
+  .blocks-toolbar {
     display: flex;
     gap: 0.5rem;
     flex-shrink: 0;
+    padding-bottom: 0.5rem;
   }
-  .blocks-actions .muted {
+  .blocks-toolbar .muted {
     background: #f3f4f6;
     border: 1px solid #ddd;
   }
-  .block-card {
-    margin: 1rem 0;
-    padding: 0.75rem;
-    background: #fff;
-    border: 1px solid #ddd;
+  .master-detail {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    flex: 1;
+    min-height: 0;
+    border: 1px solid #e5e7eb;
     border-radius: 6px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .block-list {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    border-right: 1px solid #e5e7eb;
+    background: #fafafa;
+  }
+  .block-list button {
+    width: 100%;
+    text-align: left;
+    padding: 0.55rem 0.75rem;
+    border: none;
+    background: none;
+    border-bottom: 1px solid #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+    cursor: pointer;
+  }
+  .block-list button:hover {
+    background: #f3f4f6;
+  }
+  .block-list button.selected {
+    background: #eff6ff;
+  }
+  .block-list-meta {
+    font-size: 0.7rem;
+    color: #888;
+  }
+  .block-editor {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 0.75rem 1rem;
+    overflow: hidden;
   }
   .block-card-header {
     display: flex;
@@ -394,15 +465,22 @@
     align-items: center;
     gap: 0.5rem;
     margin-bottom: 0.35rem;
+    flex-shrink: 0;
   }
   .block-label {
     font-weight: 600;
+  }
+  .char-meta {
+    margin-left: auto;
+    font-size: 0.75rem;
+    color: #888;
   }
   .block-desc {
     margin: 0 0 0.35rem;
     font-size: 0.85rem;
     color: #666;
     font-style: italic;
+    flex-shrink: 0;
   }
   .read-only-badge,
   .shared-badge {
@@ -416,29 +494,36 @@
     background: #fef3c7;
     color: #92400e;
   }
-  .block-card textarea {
+  .block-textarea {
+    flex: 1;
+    min-height: 0;
     width: 100%;
+    resize: none;
     margin-bottom: 0.5rem;
+    font-family: inherit;
+    font-size: 0.9rem;
+    line-height: 1.4;
   }
-  .block-card textarea:disabled {
+  .block-textarea:disabled {
     background: #f9fafb;
     color: #666;
   }
   .block-actions {
     display: flex;
     gap: 0.5rem;
+    flex-shrink: 0;
   }
   .block-actions .muted {
     background: #f3f4f6;
     border: 1px solid #ddd;
   }
-  .error {
-    color: #dc2626;
-    margin: 0 0 0.5rem;
-  }
   .empty {
     color: #888;
     margin: 1rem 0;
+  }
+  .error {
+    color: #dc2626;
+    margin: 0 0 0.5rem;
   }
   .modal-backdrop {
     position: fixed;

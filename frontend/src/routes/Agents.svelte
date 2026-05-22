@@ -27,6 +27,7 @@
   let confirmDelete = $state(false);
   let attachedToolIds = $state([]);
   let toast = $state("");
+  let agentSubtab = $state("blocks");
 
   let editingName = $state(false);
   let editName = $state("");
@@ -86,8 +87,13 @@
     }
   }
 
+  function setAgentSubtab(tab) {
+    agentSubtab = tab;
+  }
+
   async function loadDetail(id) {
     error = "";
+    agentSubtab = "blocks";
     editingName = false;
     editingModel = false;
     editingContextWindow = false;
@@ -427,22 +433,45 @@
         <dt>Created</dt><dd>{detail.created_at}</dd>
       </dl>
 
-      <BlockMemory
-        agentId={selectedId}
-        agentName={detail.name}
-        bind:blocks
-        onError={(msg) => (error = msg)}
-        onReload={() => loadDetail(selectedId)}
-      />
+      <div class="agent-workspace">
+        <nav class="agent-subtabs" aria-label="Agent configuration">
+          <button
+            type="button"
+            class:active={agentSubtab === "blocks"}
+            onclick={() => setAgentSubtab("blocks")}
+          >
+            Memory Blocks
+          </button>
+          <button
+            type="button"
+            class:active={agentSubtab === "tools"}
+            onclick={() => setAgentSubtab("tools")}
+          >
+            Tools
+          </button>
+        </nav>
 
-      <h3>Tools</h3>
-      {#if toast}<p class="toast">{toast}</p>{/if}
-      <ToolSelector
-        {allTools}
-        agentId={selectedId}
-        bind:selectedIds={attachedToolIds}
-        onError={showToast}
-      />
+        <div class="subtab-panel">
+          {#if agentSubtab === "blocks"}
+            <BlockMemory
+              agentId={selectedId}
+              agentName={detail.name}
+              bind:blocks
+              onError={(msg) => (error = msg)}
+              onReload={() => loadDetail(selectedId)}
+            />
+          {:else}
+            {#if toast}<p class="toast">{toast}</p>{/if}
+            <ToolSelector
+              {allTools}
+              agentId={selectedId}
+              bind:selectedIds={attachedToolIds}
+              layout="master-detail"
+              onError={showToast}
+            />
+          {/if}
+        </div>
+      </div>
 
       <div class="danger">
         {#if confirmDelete}
@@ -559,7 +588,50 @@
   }
   .detail {
     padding: 1.25rem;
-    overflow-y: auto;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .agent-workspace {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin-top: 1rem;
+  }
+  .agent-subtabs {
+    display: flex;
+    gap: 0;
+    flex-shrink: 0;
+    border-bottom: 1px solid #e5e7eb;
+    margin-bottom: 0;
+  }
+  .agent-subtabs button {
+    padding: 0.5rem 1rem;
+    border: none;
+    background: none;
+    font-size: 0.9rem;
+    color: #6b7280;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .agent-subtabs button:hover {
+    color: #374151;
+  }
+  .agent-subtabs button.active {
+    color: #2563eb;
+    font-weight: 600;
+    border-bottom-color: #2563eb;
+  }
+  .subtab-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    padding-top: 0.75rem;
+    overflow: hidden;
   }
   .detail-header h2 {
     margin: 0 0 0.75rem;
@@ -591,6 +663,10 @@
     padding: 0.15rem 0.35rem;
     border: 1px solid #ccc;
     border-radius: 4px;
+  }
+  .detail-header,
+  .meta-grid {
+    flex-shrink: 0;
   }
   .meta-grid {
     display: grid;
@@ -647,7 +723,8 @@
     margin: 0.5rem 0;
   }
   .danger {
-    margin-top: 2rem;
+    flex-shrink: 0;
+    margin-top: 1rem;
     padding-top: 1rem;
     border-top: 1px solid #eee;
   }
