@@ -4,6 +4,7 @@
   import Chat from "./routes/Chat.svelte";
   import Files from "./routes/Files.svelte";
   import Mcp from "./routes/Mcp.svelte";
+  import Providers from "./routes/Providers.svelte";
   import { currentTab, initFromHash, setTab } from "./lib/stores.js";
 
   let tab = $state("agents");
@@ -31,6 +32,9 @@
       <button class:active={tab === "agents"} onclick={() => navigate("agents")}>
         Agents
       </button>
+      <button class:active={tab === "providers"} onclick={() => navigate("providers")}>
+        Providers
+      </button>
       <button class:active={tab === "chat"} onclick={() => navigate("chat")}>
         Chat
       </button>
@@ -45,6 +49,9 @@
   <main>
     <div class="tab-panel" class:hidden={tab !== "agents"}>
       <Agents />
+    </div>
+    <div class="tab-panel" class:hidden={tab !== "providers"}>
+      <Providers />
     </div>
     <div class="tab-panel" class:hidden={tab !== "chat"}>
       <Chat />

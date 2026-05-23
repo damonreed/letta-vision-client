@@ -111,7 +111,33 @@ export const api = {
     request(`/agents/${agentId}/tools/${toolId}`, { method: "DELETE" }),
 
   listModels: () => request("/models"),
+  setModelVisionOverride: (handle, supports_vision) =>
+    request(`/models/${encodeURIComponent(handle)}/vision`, {
+      method: "PATCH",
+      body: JSON.stringify({ supports_vision }),
+    }),
   listEmbeddings: () => request("/embeddings"),
+
+  listProviders: (categories = ["base", "byok"]) => {
+    const params = new URLSearchParams();
+    for (const c of categories) params.append("provider_category", c);
+    const qs = params.toString();
+    return request(`/providers${qs ? `?${qs}` : ""}`);
+  },
+  getProvider: (id) => request(`/providers/${id}`),
+  createProvider: (body) =>
+    request("/providers", { method: "POST", body: JSON.stringify(body) }),
+  updateProvider: (id, body) =>
+    request(`/providers/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteProvider: (id) =>
+    request(`/providers/${id}`, { method: "DELETE" }),
+  checkProvider: (body) =>
+    request("/providers/check", { method: "POST", body: JSON.stringify(body) }),
+  checkProviderById: (id) =>
+    request(`/providers/${id}/check`, { method: "POST", body: "{}" }),
+  refreshProvider: (id) =>
+    request(`/providers/${id}/refresh`, { method: "POST", body: "{}" }),
+  listProviderModels: (id) => request(`/providers/${id}/models`),
 
   listFolders: () => request("/folders"),
   createFolder: (body) =>

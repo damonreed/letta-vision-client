@@ -23,9 +23,6 @@
 
   $effect(() => {
     if (agentId) {
-      const pick = pickConversationForAgent(agentId);
-      activeId = pick;
-      activeConversationId.set(pick);
       loadConversations(agentId);
     } else {
       convList = [];
@@ -42,7 +39,9 @@
       convList = list;
       conversations.set(list);
       const pick = pickConversationForAgent(id, list);
-      selectConversation(pick);
+      if (!activeId || !list.some((c) => c.id === activeId)) {
+        selectConversation(pick);
+      }
     } catch (err) {
       error = err.message;
     }

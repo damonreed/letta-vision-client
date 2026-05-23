@@ -11,9 +11,14 @@ export const modelsCache = writable([]);
 export function modelSupportsVision(modelHandle, models) {
   if (!modelHandle || !models?.length) return false;
   const m = models.find(
-    (x) => x.handle === modelHandle || x.name === modelHandle || x.model === modelHandle
+    (x) =>
+      x.handle === modelHandle ||
+      x.name === modelHandle ||
+      x.model === modelHandle,
   );
-  return Boolean(m?.supports_vision);
+  if (!m) return false;
+  if (m.vision_override != null) return Boolean(m.vision_override);
+  return Boolean(m.supports_vision);
 }
 
 export const DEFAULT_CONVERSATION_ID = "default";
@@ -78,6 +83,7 @@ export function initFromHash() {
   if (hash === "chat") currentTab.set("chat");
   else if (hash === "files") currentTab.set("files");
   else if (hash === "mcp") currentTab.set("mcp");
+  else if (hash === "providers") currentTab.set("providers");
   else currentTab.set("agents");
 }
 
@@ -90,7 +96,9 @@ export function setTab(tab) {
         ? "#files"
         : tab === "mcp"
           ? "#mcp"
-          : "#agents";
+          : tab === "providers"
+            ? "#providers"
+            : "#agents";
   window.location.hash = hash;
 }
 

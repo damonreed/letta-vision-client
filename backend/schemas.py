@@ -158,6 +158,33 @@ class FetchImageUrlResponse(BaseModel):
     data: str
 
 
+class CreateProviderRequest(BaseModel):
+    name: str
+    provider_type: str
+    api_key: str
+    access_key: str | None = None
+    region: str | None = None
+    base_url: str | None = None
+    api_version: str | None = None
+
+
+class UpdateProviderRequest(BaseModel):
+    api_key: str
+    access_key: str | None = None
+    region: str | None = None
+    base_url: str | None = None
+    api_version: str | None = None
+
+
+class CheckProviderRequest(BaseModel):
+    provider_type: str
+    api_key: str
+    access_key: str | None = None
+    region: str | None = None
+    base_url: str | None = None
+    api_version: str | None = None
+
+
 class ErrorResponse(BaseModel):
     error: str
 

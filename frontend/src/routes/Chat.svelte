@@ -5,6 +5,24 @@
   import { api } from "../lib/api.js";
   import { messageListKey, sortMessagesChronological, withUniqueMessageIds } from "../lib/messages.js";
   import { buildDisplayGroups } from "../lib/chatDisplay.js";
+  import {
+    enrichStreamFailureRow,
+    failureInjectedJsonFromContent,
+    findPrecedingUserGroup,
+    isFailedTurnGroup,
+    isRegeneratableFailure,
+    isRealUserMessage,
+    mergeCachedUserTurn,
+    outgoingFromUserMessage,
+    outgoingHasImage,
+    unpackPackedFailure,
+  } from "../lib/chatFailures.js";
+  import {
+    cachedOutgoing,
+    cachedUserGroup,
+    loadUserTurn,
+    saveUserTurn,
+  } from "../lib/chatTurnCache.js";
   import { parseContent, imageSrcFromBlock, previewSrcForAttachment } from "../lib/contentBlocks.js";
   import {
     buildMessageContent,
@@ -187,9 +205,14 @@
     try {
       const hist = await api.getHistory(id, convId);
       if (requestId !== historyRequest) return;
-      const normalized = sortMessagesChronological(
+      let normalized = sortMessagesChronological(
         hist.map(normalizeMessage).filter(Boolean)
       );
+      const latestUser = [...normalized].reverse().find(isRealUserMessage);
+      if (latestUser) {
+        saveUserTurn(id, convId, latestUser, outgoingFromUserMessage(latestUser));
+      }
+      normalized = mergeCachedUserTurn(loadUserTurn(id, convId), normalized);
       messages = withUniqueMessageIds(normalized);
       stickToBottom = true;
       await scrollToBottom();
@@ -237,44 +260,32 @@
     return `System context (${blocks} memory blocks, ${text.length} chars)`;
   }
 
-  function unpackLlmFailurePacked(raw) {
-    if (!raw) return null;
-    try {
-      const packed = JSON.parse(raw);
-      if (
-        packed?.type === "system_alert" &&
-        (packed.llm_failure_stats || packed.degraded_failure_stats)
-      ) {
-        return packed;
-      }
-    } catch {
-      /* not packed JSON */
-    }
+  function rawMessageContent(m) {
+    if (typeof m?.content === "string") return m.content;
+    if (Array.isArray(m?.content) && m.content[0]?.text) return m.content[0].text;
     return null;
   }
 
   function unpackLlmFailureNotice(m) {
     if (m?.llm_failure_stats || m?.degraded_failure_stats) {
-      return typeof m.summary === "string" ? m.summary : null;
+      if (typeof m.summary === "string") return m.summary;
+      if (typeof m.message === "string") return m.message;
     }
-    let raw = null;
-    if (typeof m?.content === "string") raw = m.content;
-    else if (Array.isArray(m?.content) && m.content[0]?.text) raw = m.content[0].text;
-    const packed = unpackLlmFailurePacked(raw);
+    const packed = unpackPackedFailure(rawMessageContent(m));
     return packed?.message || null;
   }
 
   function llmFailureInjectedJson(m) {
-    let raw = null;
-    if (typeof m?.content === "string") raw = m.content;
-    else if (Array.isArray(m?.content) && m.content[0]?.text) raw = m.content[0].text;
-    const packed = unpackLlmFailurePacked(raw);
-    if (!packed) return null;
-    try {
-      return JSON.stringify(packed, null, 2);
-    } catch {
-      return raw;
+    if (m?.llm_failure_stats || m?.degraded_failure_stats) {
+      const packed = {
+        type: "system_alert",
+        message: m.summary || m.message || unpackLlmFailureNotice(m),
+        llm_failure_stats: m.llm_failure_stats,
+        degraded_failure_stats: m.degraded_failure_stats || m.llm_failure_stats,
+      };
+      return failureInjectedJsonFromContent(JSON.stringify(packed));
     }
+    return failureInjectedJsonFromContent(rawMessageContent(m));
   }
 
   /** Legacy stream appended a second assistant chunk with fenced JSON; strip from main text. */
@@ -492,15 +503,7 @@
     pendingAttachment = null;
   }
 
-  async function send() {
-    const text = input.trim();
-    const attachment = pendingAttachment;
-    if ((!text && !attachment) || !agentId || streaming) return;
-    if (attachment && !visionCapable) {
-      error = "This agent's model can't see images. Switch to a vision-capable agent.";
-      return;
-    }
-
+  async function runMessageStream(outgoing, { appendUserBubble = false, userBubble = null } = {}) {
     const streamAgentId = agentId;
     const streamConversationId = conversationId;
     const streamId = ++streamIdCounter;
@@ -512,25 +515,14 @@
       streamId,
     };
 
-    input = "";
-    saveChatDraft(streamAgentId, streamConversationId, "");
     streaming = true;
     stickToBottom = true;
     error = "";
 
-    const outgoing = buildMessageContent(text, attachment);
-    const userMsg = {
-      id: `local-${Date.now()}`,
-      role: "user",
-      type: "user_message",
-      content: typeof outgoing === "string" ? outgoing : text || "",
-      contentBlocks: Array.isArray(outgoing) ? outgoing : null,
-      date: new Date().toISOString(),
-      collapsed: false,
-    };
-    pendingAttachment = null;
-    messages = withUniqueMessageIds([...messages, userMsg]);
-    await scrollToBottom();
+    if (appendUserBubble && userBubble) {
+      messages = withUniqueMessageIds([...messages, userBubble]);
+      await scrollToBottom();
+    }
 
     let assistantIdx = null;
     let pendingReasoning = "";
@@ -574,7 +566,7 @@
               ? event.content
               : extractText(event.content);
           if (assistantIdx === null) {
-            const row = {
+            let row = {
               id: event.id
                 ? `${event.id}-part-${streamPart++}`
                 : `stream-${Date.now()}-${streamPart++}`,
@@ -585,11 +577,13 @@
               date: event.date,
               collapsed: false,
             };
+            row = enrichStreamFailureRow(row, chunk);
             messages = withUniqueMessageIds([...messages, row]);
             assistantIdx = messages.length - 1;
           } else {
             const merged = (messages[assistantIdx].content || "") + (chunk || "");
             messages[assistantIdx].content = stripEmbeddedFailureJsonFence(merged);
+            enrichStreamFailureRow(messages[assistantIdx], messages[assistantIdx].content);
             messages = [...messages];
           }
         } else if (event.type === "tool_call") {
@@ -647,6 +641,59 @@
         streaming = false;
       }
     }
+  }
+
+  async function send() {
+    const text = input.trim();
+    const attachment = pendingAttachment;
+    if ((!text && !attachment) || !agentId || streaming) return;
+    if (attachment && !visionCapable) {
+      error = "This agent's model can't see images. Switch to a vision-capable agent.";
+      return;
+    }
+
+    const streamAgentId = agentId;
+    const streamConversationId = conversationId;
+    input = "";
+    saveChatDraft(streamAgentId, streamConversationId, "");
+
+    const outgoing = buildMessageContent(text, attachment);
+    const userMsg = {
+      id: `local-${Date.now()}`,
+      role: "user",
+      type: "user_message",
+      content: typeof outgoing === "string" ? outgoing : text || "",
+      contentBlocks: Array.isArray(outgoing) ? outgoing : null,
+      date: new Date().toISOString(),
+      collapsed: false,
+    };
+    pendingAttachment = null;
+    saveUserTurn(streamAgentId, streamConversationId, userMsg, outgoing);
+
+    await runMessageStream(outgoing, { appendUserBubble: true, userBubble: userMsg });
+  }
+
+  function resolveUserGroupForFailure(groupIndex) {
+    return (
+      findPrecedingUserGroup(displayGroups, groupIndex) ||
+      cachedUserGroup(agentId, conversationId)
+    );
+  }
+
+  async function regenerateTurn(failedGroup, userGroup) {
+    if (streaming || !agentId || !failedGroup) return;
+
+    const userMsg = userGroup?.messages?.[0];
+    const outgoing =
+      outgoingFromUserMessage(userMsg) || cachedOutgoing(agentId, conversationId);
+    if (!outgoing) return;
+
+    if (outgoingHasImage(outgoing) && !visionCapable) {
+      error = "This agent's model can't see images. Switch to a vision-capable agent.";
+      return;
+    }
+
+    await runMessageStream(outgoing);
   }
 
   function extractText(content) {
@@ -708,15 +755,19 @@
     {#if dropOverlay}<div class="drop-overlay">Drop image to attach</div>{/if}
     <ConversationList agentId={agentId} />
     <div class="messages" bind:this={listEl} onscroll={onMessagesScroll} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
-      {#each displayGroups as group (group.key)}
+      {#each displayGroups as group, groupIndex (group.key)}
         {#if group.type === "user" || group.type === "single"}
           {#each group.messages as msg, i (messageListKey(msg, i))}
-            {@render messageArticle(msg)}
+            {@const userGroup = group.type === "user" ? group : resolveUserGroupForFailure(groupIndex)}
+            {@const canRegenerate = group.type === "single" && isRegeneratableFailure(msg) && userGroup}
+            {@render messageArticle(msg, canRegenerate ? { failedGroup: group, userGroup } : null)}
           {/each}
         {:else}
           <div class="turn-group">
             {#each group.visible as msg, i (messageListKey(msg, i))}
-              {@render messageArticle(msg)}
+              {@const userGroup = resolveUserGroupForFailure(groupIndex)}
+              {@const canRegenerate = isFailedTurnGroup(group) && isRegeneratableFailure(msg) && userGroup}
+              {@render messageArticle(msg, canRegenerate ? { failedGroup: group, userGroup } : null)}
             {/each}
             {#if group.hiddenCount > 0}
               <button
@@ -791,7 +842,7 @@
   <ImageViewer src={viewerSrc} bind:open={viewerOpen} />
 </div>
 
-{#snippet messageArticle(msg)}
+{#snippet messageArticle(msg, regenerate = null)}
   <article class="msg {msg.role}">
     <div class="msg-header">
       <span class="role">{msg.role}</span>
@@ -884,6 +935,20 @@
     {:else}
       <div class="content"><pre class="wrap">{msg.content}</pre></div>
     {/if}
+    {#if regenerate}
+      <div class="msg-actions">
+        <button
+          type="button"
+          class="regenerate-btn"
+          title="Regenerate"
+          disabled={streaming}
+          onclick={() => regenerateTurn(regenerate.failedGroup, regenerate.userGroup)}
+        >
+          <span class="regenerate-icon" aria-hidden="true">↻</span>
+          Regenerate
+        </button>
+      </div>
+    {/if}
   </article>
 {/snippet}
 
@@ -942,6 +1007,40 @@
   .msg.error {
     border-left: 3px solid #c62828;
     background: #ffebee;
+  }
+  .msg.agent:has(.msg-actions) {
+    border-left: 3px solid #f59e0b;
+  }
+  .msg-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.65rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid #e5e7eb;
+  }
+  .regenerate-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem;
+    font-size: 0.8rem;
+    color: #374151;
+    background: #f9fafb;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .regenerate-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+  }
+  .regenerate-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .regenerate-icon {
+    font-size: 1rem;
+    line-height: 1;
   }
   .error-text {
     color: #b71c1c;

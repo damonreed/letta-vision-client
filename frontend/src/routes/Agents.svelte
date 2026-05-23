@@ -10,7 +10,7 @@
     selectedAgentId,
   } from "../lib/stores.js";
   import { defaultToolIds } from "../lib/tools.js";
-  import { modelSupportsVision } from "../lib/stores.js";
+  import { modelSupportsVision, modelsCache } from "../lib/stores.js";
   import FilteredSelect from "../lib/FilteredSelect.svelte";
   import ToolSelector from "../lib/ToolSelector.svelte";
   import BlockMemory from "../lib/BlockMemory.svelte";
@@ -21,6 +21,7 @@
   let blocks = $state([]);
   let allTools = $state([]);
   let models = $state([]);
+  let modelObjects = $state([]);
   let embeddings = $state([]);
   let showCreate = $state(false);
   let error = $state("");
@@ -79,7 +80,9 @@
         api.listTools(),
       ]);
       agents.set(a);
-      models = uniqueHandles(Array.isArray(m) ? m : []);
+      modelObjects = Array.isArray(m) ? m : [];
+      models = uniqueHandles(modelObjects);
+      modelsCache.set(modelObjects);
       embeddings = uniqueHandles(Array.isArray(e) ? e : []);
       allTools = t;
     } catch (err) {
@@ -114,19 +117,58 @@
     activeConversationId.set(pickConversationForAgent(id));
   }
 
-  function openCreate() {
-    form = {
-      name: "",
-      model: models[0] || "",
-      context_window_limit: "",
-      embedding: embeddings[0] || "",
-      per_file_view_window_char_limit: "",
-      persona: "",
-      human: "",
-      tools: defaultToolIds(allTools),
-    };
-    showCreate = true;
+  function findModelEntry(handle) {
+    if (!handle || !modelObjects?.length) return null;
+    return modelObjects.find(
+      (m) =>
+        modelHandle(m) === handle ||
+        m.handle === handle ||
+        m.model === handle ||
+        m.name === handle,
+    );
   }
+
+  function defaultContextWindowForHandle(handle) {
+    const m = findModelEntry(handle);
+    const cw = m?.max_context_window ?? m?.context_window;
+    return cw != null && Number(cw) > 0 ? Number(cw) : null;
+  }
+
+  function contextWindowPayloadForHandle(handle, explicitField = "") {
+    if (String(explicitField).trim()) {
+      return { context_window_limit: parsePositiveInt(explicitField) };
+    }
+    const cw = defaultContextWindowForHandle(handle);
+    return cw ? { context_window_limit: cw } : {};
+  }
+
+  async function openCreate() {
+    error = "";
+    try {
+      await refreshModels();
+      const initialModel = models[0] || "";
+      const initialCw = defaultContextWindowForHandle(initialModel);
+      form = {
+        name: "",
+        model: initialModel,
+        context_window_limit: initialCw ? String(initialCw) : "",
+        embedding: embeddings[0] || "",
+        per_file_view_window_char_limit: "",
+        persona: "",
+        human: "",
+        tools: defaultToolIds(allTools),
+      };
+      showCreate = true;
+    } catch (err) {
+      error = err.message;
+    }
+  }
+
+  $effect(() => {
+    if (!showCreate || !form.model) return;
+    const cw = defaultContextWindowForHandle(form.model);
+    if (cw) form.context_window_limit = String(cw);
+  });
 
   async function createAgent() {
     error = "";
@@ -138,9 +180,7 @@
         persona: form.persona,
         human: form.human,
         tools: form.tools,
-        ...(form.context_window_limit
-          ? { context_window_limit: parsePositiveInt(form.context_window_limit) }
-          : {}),
+        ...contextWindowPayloadForHandle(form.model, form.context_window_limit),
         ...(form.per_file_view_window_char_limit
           ? {
               per_file_view_window_char_limit: parsePositiveInt(
@@ -207,7 +247,10 @@
 
   async function saveModel() {
     try {
-      await api.updateAgent(selectedId, { model: editModel });
+      await api.updateAgent(selectedId, {
+        model: editModel,
+        ...contextWindowPayloadForHandle(editModel),
+      });
       editingModel = false;
       await loadAll();
       await loadDetail(selectedId);
@@ -256,9 +299,23 @@
     editingName = true;
   }
 
-  function startEditModel() {
-    editModel = detail.model || "";
-    editingModel = true;
+  async function refreshModels() {
+    const m = await api.listModels();
+    modelObjects = Array.isArray(m) ? m : [];
+    models = uniqueHandles(modelObjects);
+    modelsCache.set(modelObjects);
+    return models;
+  }
+
+  async function startEditModel() {
+    error = "";
+    try {
+      await refreshModels();
+      editModel = detail.model || "";
+      editingModel = true;
+    } catch (err) {
+      error = err.message;
+    }
   }
 
   function startEditContextWindow() {
@@ -314,7 +371,7 @@
             onclick={() => selectAgent(agent.id)}
           >
             <strong>{agent.name}</strong>
-            {#if modelSupportsVision(agent.model, models)}
+            {#if modelSupportsVision(agent.model, modelObjects)}
               <span class="vision-badge" title="This agent's model can see images.">Vision</span>
             {/if}
             <span class="meta">{agent.model || "—"}</span>
@@ -358,7 +415,12 @@
         <dd>
           {#if editingModel}
             <div class="inline-edit stack">
-              <FilteredSelect label="" options={models} bind:value={editModel} />
+              <FilteredSelect
+                label=""
+                options={models}
+                bind:value={editModel}
+                oncancel={() => (editingModel = false)}
+              />
               <div class="btn-row">
                 <button onclick={saveModel}>Save</button>
                 <button class="muted" onclick={() => (editingModel = false)}>Cancel</button>
@@ -394,7 +456,12 @@
         <dd>
           {#if editingEmbedding}
             <div class="inline-edit stack">
-              <FilteredSelect label="" options={embeddings} bind:value={editEmbedding} />
+              <FilteredSelect
+                label=""
+                options={embeddings}
+                bind:value={editEmbedding}
+                oncancel={() => (editingEmbedding = false)}
+              />
               <div class="btn-row">
                 <button onclick={saveEmbedding}>Save</button>
                 <button class="muted" onclick={() => (editingEmbedding = false)}>Cancel</button>
@@ -509,8 +576,13 @@
             min="1"
             step="1"
             bind:value={form.context_window_limit}
-            placeholder="Optional — model default if blank"
+            placeholder="Filled from model catalog when you pick a model"
           />
+          {#if form.model && defaultContextWindowForHandle(form.model)}
+            <span class="catalog-hint">
+              Catalog default: {defaultContextWindowForHandle(form.model).toLocaleString()} tokens
+            </span>
+          {/if}
         </label>
         <FilteredSelect label="Embedding" options={embeddings} bind:value={form.embedding} />
         <label>
@@ -778,6 +850,10 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+  }
+  .catalog-hint {
+    font-size: 0.8rem;
+    color: #6b7280;
   }
   .modal-body input,
   .modal-body textarea {
