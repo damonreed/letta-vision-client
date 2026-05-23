@@ -168,6 +168,22 @@ export const api = {
   detachFolderFromAgent: (agentId, folderId) =>
     request(`/agents/${agentId}/folders/${folderId}/detach`, { method: "DELETE" }),
 
+  getFileCore: (fileId) => request(`/files/${fileId}/core`),
+  patchFileCore: (fileId, summary) =>
+    request(`/files/${fileId}/core`, {
+      method: "PATCH",
+      body: JSON.stringify({ summary }),
+    }),
+  listOpenFiles: (agentId) => request(`/agents/${agentId}/open-files`),
+  closeOpenFile: (agentId, fileId) =>
+    request(`/agents/${agentId}/open-files/${fileId}/close`, { method: "POST" }),
+  listFileArchives: (fileId) => request(`/files/${fileId}/archives`),
+  searchFileArchives: (body) =>
+    request("/file-archives/search", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   async *streamMessage(agentId, content, conversationId = null, { signal } = {}) {
     const params = conversationId
       ? `?conversation_id=${encodeURIComponent(conversationId)}`
@@ -185,6 +201,7 @@ export const api = {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let sawTerminal = false;
     while (true) {
       if (signal?.aborted) break;
       const { done, value } = await reader.read();
@@ -196,13 +213,20 @@ export const api = {
         for (const line of part.split("\n")) {
           if (line.startsWith("data: ")) {
             try {
-              yield JSON.parse(line.slice(6));
+              const event = JSON.parse(line.slice(6));
+              if (event?.type === "done" || event?.type === "error") {
+                sawTerminal = true;
+              }
+              yield event;
             } catch {
               /* skip malformed */
             }
           }
         }
       }
+    }
+    if (!signal?.aborted && !sawTerminal) {
+      yield { type: "stream_end" };
     }
   },
 };

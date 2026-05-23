@@ -14,6 +14,7 @@
   import FilteredSelect from "../lib/FilteredSelect.svelte";
   import ToolSelector from "../lib/ToolSelector.svelte";
   import BlockMemory from "../lib/BlockMemory.svelte";
+  import AgentFiles from "../lib/AgentFiles.svelte";
 
   let agentList = $state([]);
   let selectedId = $state(null);
@@ -516,6 +517,13 @@
           >
             Tools
           </button>
+          <button
+            type="button"
+            class:active={agentSubtab === "files"}
+            onclick={() => setAgentSubtab("files")}
+          >
+            Files
+          </button>
         </nav>
 
         <div class="subtab-panel">
@@ -527,6 +535,8 @@
               onError={(msg) => (error = msg)}
               onReload={() => loadDetail(selectedId)}
             />
+          {:else if agentSubtab === "files"}
+            <AgentFiles agentId={selectedId} onError={(msg) => (error = msg)} />
           {:else}
             {#if toast}<p class="toast">{toast}</p>{/if}
             <ToolSelector

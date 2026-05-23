@@ -23,6 +23,13 @@
     loadUserTurn,
     saveUserTurn,
   } from "../lib/chatTurnCache.js";
+  import {
+    createStreamWatchdog,
+    isKeepaliveEvent,
+    isTerminalStreamEvent,
+    RECOVERY_MESSAGES,
+    VISIBILITY_RECOVER_MS,
+  } from "../lib/chatStreamRecovery.js";
   import { parseContent, imageSrcFromBlock, previewSrcForAttachment } from "../lib/contentBlocks.js";
   import {
     buildMessageContent,
@@ -38,6 +45,7 @@
     redactToolResultDisplayText,
   } from "../lib/toolResultImages.js";
   import ConversationList from "../lib/ConversationList.svelte";
+  import SystemContextModal from "../lib/SystemContextModal.svelte";
   import {
     activeConversationId,
     agents,
@@ -59,7 +67,13 @@
   let streaming = $state(false);
   let error = $state("");
   let showMemory = $state(false);
+  let showSystemContext = $state(false);
+  let systemContextContent = $state("");
+  let systemContextSummary = $state("");
+  let systemContextLoading = $state(false);
   let memoryBlocks = $state([]);
+  let memoryTab = $state("blocks");
+  let openFiles = $state([]);
   let expanded = $state({});
   let expandedTurns = $state({});
   let listEl = $state(null);
@@ -78,6 +92,9 @@
   let viewerSrc = $state(null);
   let viewerOpen = $state(false);
   let fileInput = $state(null);
+  let tabHiddenAt = null;
+  let streamUserCancelled = false;
+  let streamRecoveryReason = null;
 
   const activeAgent = $derived(agentList.find((a) => a.id === agentId));
   const visionCapable = $derived(
@@ -86,7 +103,40 @@
 
   const SCROLL_BOTTOM_THRESHOLD = 64;
 
-  const displayGroups = $derived(buildDisplayGroups(messages));
+  const chatMessages = $derived(messages.filter((m) => m.role !== "system"));
+  const displayGroups = $derived(buildDisplayGroups(chatMessages));
+
+  function extractSystemContent(msgs) {
+    const sys = msgs.find((m) => m.role === "system");
+    return sys?.content || "";
+  }
+
+  function refreshSystemContextFromMessages(msgs) {
+    const text = extractSystemContent(msgs);
+    systemContextContent = text;
+    systemContextSummary = text ? systemSummary(text) : "";
+  }
+
+  async function openSystemContext() {
+    showSystemContext = true;
+    systemContextLoading = true;
+    try {
+      if (agentId && conversationId) {
+        const hist = await api.getHistory(agentId, conversationId);
+        const normalized = sortMessagesChronological(
+          hist.map(normalizeMessage).filter(Boolean)
+        );
+        refreshSystemContextFromMessages(normalized);
+      } else {
+        refreshSystemContextFromMessages(messages);
+      }
+    } catch (err) {
+      refreshSystemContextFromMessages(messages);
+      error = err.message;
+    } finally {
+      systemContextLoading = false;
+    }
+  }
 
   function isNearBottom(el = listEl, threshold = SCROLL_BOTTOM_THRESHOLD) {
     if (!el) return true;
@@ -150,10 +200,37 @@
     const u3 = activeConversationId.subscribe((cid) => {
       conversationId = cid;
     });
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        tabHiddenAt = Date.now();
+        return;
+      }
+      if (
+        streaming &&
+        tabHiddenAt &&
+        Date.now() - tabHiddenAt >= VISIBILITY_RECOVER_MS
+      ) {
+        void recoverChat(RECOVERY_MESSAGES.visibility);
+      }
+      tabHiddenAt = null;
+    }
+
+    function onOnline() {
+      if (streaming) {
+        void recoverChat(RECOVERY_MESSAGES.online);
+      }
+    }
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("online", onOnline);
+
     return () => {
       u1();
       u2();
       u3();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("online", onOnline);
     };
   });
 
@@ -198,6 +275,61 @@
     await loadMemory(id);
   }
 
+  function applyServerHistory(hist, { id = agentId, convId = conversationId } = {}) {
+    let normalized = sortMessagesChronological(
+      hist.map(normalizeMessage).filter(Boolean)
+    );
+    const latestUser = [...normalized].reverse().find(isRealUserMessage);
+    if (latestUser && id && convId) {
+      saveUserTurn(id, convId, latestUser, outgoingFromUserMessage(latestUser));
+    }
+    normalized = mergeCachedUserTurn(loadUserTurn(id, convId), normalized);
+    messages = withUniqueMessageIds(normalized);
+    refreshSystemContextFromMessages(messages);
+  }
+
+  async function syncConversationFromServer(
+    streamAgentId,
+    streamConversationId,
+    { reason = null } = {}
+  ) {
+    if (!streamAgentId || !streamConversationId) return;
+    try {
+      const hist = await api.getHistory(streamAgentId, streamConversationId);
+      if (streamAgentId !== agentId || streamConversationId !== conversationId) {
+        return;
+      }
+      applyServerHistory(hist, { id: streamAgentId, convId: streamConversationId });
+      if (reason) error = reason;
+      stickToBottom = true;
+      await scrollToBottom();
+    } catch (err) {
+      if (streamAgentId === agentId && streamConversationId === conversationId) {
+        error = reason ? `${reason} (${err.message})` : err.message;
+      }
+    }
+  }
+
+  async function recoverChat(reason = RECOVERY_MESSAGES.manual) {
+    if (activeStream) {
+      streamRecoveryReason = reason;
+      activeStream.abort.abort();
+    } else {
+      stopActiveStream();
+      if (agentId && conversationId) {
+        await syncConversationFromServer(agentId, conversationId, { reason });
+        await loadMemory(agentId);
+      }
+    }
+  }
+
+  function cancelActiveStream() {
+    if (!activeStream || !streaming) return;
+    streamUserCancelled = true;
+    streamRecoveryReason = RECOVERY_MESSAGES.cancel;
+    activeStream.abort.abort();
+  }
+
   async function loadHistory(id, convId = conversationId) {
     if (!id || !convId) return;
     const requestId = ++historyRequest;
@@ -205,15 +337,7 @@
     try {
       const hist = await api.getHistory(id, convId);
       if (requestId !== historyRequest) return;
-      let normalized = sortMessagesChronological(
-        hist.map(normalizeMessage).filter(Boolean)
-      );
-      const latestUser = [...normalized].reverse().find(isRealUserMessage);
-      if (latestUser) {
-        saveUserTurn(id, convId, latestUser, outgoingFromUserMessage(latestUser));
-      }
-      normalized = mergeCachedUserTurn(loadUserTurn(id, convId), normalized);
-      messages = withUniqueMessageIds(normalized);
+      applyServerHistory(hist, { id, convId });
       stickToBottom = true;
       await scrollToBottom();
     } catch (err) {
@@ -228,27 +352,11 @@
     } catch {
       memoryBlocks = [];
     }
-  }
-
-  function systemExpandedKey(id) {
-    return `letta-vision-client-system-expanded-${id}`;
-  }
-
-  function legacySystemExpandedKey(id) {
-    return `letta-bridge-system-expanded-${id}`;
-  }
-
-  function isSystemExpanded(id) {
-    if (typeof localStorage === "undefined") return false;
-    return (
-      localStorage.getItem(systemExpandedKey(id)) === "1" ||
-      localStorage.getItem(legacySystemExpandedKey(id)) === "1"
-    );
-  }
-
-  function setSystemExpanded(id, open) {
-    localStorage.setItem(systemExpandedKey(id), open ? "1" : "0");
-    localStorage.removeItem(legacySystemExpandedKey(id));
+    try {
+      openFiles = await api.listOpenFiles(id);
+    } catch {
+      openFiles = [];
+    }
   }
 
   function systemSummary(content) {
@@ -365,7 +473,6 @@
       role === "tool_result" ? getToolResultDisplayImages(m) : [];
 
     const id = m.id || crypto.randomUUID();
-    const systemCollapsed = role === "system" && agentId && !isSystemExpanded(agentId);
 
     if (role === "tool_result" && content) {
       content = redactToolResultDisplayText(content);
@@ -385,21 +492,9 @@
           : null,
       date: m.date,
       seq_id: m.seq_id ?? null,
-      collapsed:
-        ["tool_call", "tool_result", "reasoning"].includes(role) || systemCollapsed,
+      collapsed: ["tool_call", "tool_result", "reasoning"].includes(role),
       systemSummary: role === "system" ? systemSummary(content) : null,
     };
-  }
-
-  function toggleSystemContext() {
-    if (!agentId) return;
-    const next = !isSystemExpanded(agentId);
-    setSystemExpanded(agentId, next);
-    messages = messages.map((m) =>
-      m.role === "system"
-        ? { ...m, collapsed: !next, systemSummary: systemSummary(m.content) }
-        : m
-    );
   }
 
   async function scrollToBottom() {
@@ -518,6 +613,8 @@
     streaming = true;
     stickToBottom = true;
     error = "";
+    streamUserCancelled = false;
+    streamRecoveryReason = null;
 
     if (appendUserBubble && userBubble) {
       messages = withUniqueMessageIds([...messages, userBubble]);
@@ -527,6 +624,21 @@
     let assistantIdx = null;
     let pendingReasoning = "";
     let streamPart = 0;
+    let sawTerminal = false;
+
+    const watchdog = createStreamWatchdog({
+      onStall: () => {
+        if (abort.signal.aborted || !isCurrentStream(streamId)) return;
+        streamRecoveryReason = RECOVERY_MESSAGES.stall;
+        abort.abort();
+      },
+      onMaxDuration: () => {
+        if (abort.signal.aborted || !isCurrentStream(streamId)) return;
+        streamRecoveryReason = RECOVERY_MESSAGES.maxDuration;
+        abort.abort();
+      },
+    });
+    watchdog.start();
 
     try {
       for await (const event of api.streamMessage(
@@ -536,6 +648,23 @@
         { signal: abort.signal }
       )) {
         if (!isCurrentStream(streamId)) return;
+
+        if (isKeepaliveEvent(event)) {
+          watchdog.touch();
+          continue;
+        }
+        watchdog.touch();
+
+        if (isTerminalStreamEvent(event)) {
+          sawTerminal = true;
+        }
+
+        if (event.type === "stream_end") {
+          if (!sawTerminal) {
+            streamRecoveryReason = RECOVERY_MESSAGES.abrupt;
+          }
+          continue;
+        }
 
         if (event.type === "reasoning") {
           pendingReasoning += extractReasoning(event);
@@ -631,14 +760,27 @@
       }
       if (!isCurrentStream(streamId)) return;
       if (stickToBottom) await scrollToBottom();
-      await loadMemory(streamAgentId);
     } catch (err) {
-      if (err.name === "AbortError") return;
-      if (isCurrentStream(streamId)) error = err.message;
+      if (err.name === "AbortError") {
+        if (!streamRecoveryReason && streamUserCancelled) {
+          streamRecoveryReason = RECOVERY_MESSAGES.cancel;
+        }
+      } else if (isCurrentStream(streamId)) {
+        error = err.message;
+      }
     } finally {
+      watchdog.stop();
       if (isCurrentStream(streamId)) {
         activeStream = null;
         streaming = false;
+        try {
+          await syncConversationFromServer(streamAgentId, streamConversationId, {
+            reason: streamRecoveryReason,
+          });
+          await loadMemory(streamAgentId);
+        } catch {
+          /* syncConversationFromServer sets error when needed */
+        }
       }
     }
   }
@@ -741,15 +883,40 @@
       {/each}
     </select>
     <button
+      type="button"
       class="memory-btn"
-      title="Memory blocks"
+      title="Memory blocks and open files"
       onclick={() => (showMemory = !showMemory)}
     >
       memory
     </button>
+    <button
+      type="button"
+      class="memory-btn"
+      title="Latest compiled system context (open files, directories, blocks)"
+      onclick={openSystemContext}
+      disabled={!agentId || !conversationId}
+    >
+      context
+    </button>
   </header>
 
-  {#if error}<p class="error">{error}</p>{/if}
+  {#if error}
+    <p class="error">
+      {error}
+      <button type="button" class="ghost recover-btn" onclick={() => recoverChat()}>
+        Refresh chat
+      </button>
+    </p>
+  {/if}
+  {#if streaming}
+    <p class="streaming-banner">
+      Agent is responding…
+      <button type="button" class="ghost cancel-btn" onclick={cancelActiveStream}>
+        Cancel
+      </button>
+    </p>
+  {/if}
 
   <div class="chat-body">
     {#if dropOverlay}<div class="drop-overlay">Drop image to attach</div>{/if}
@@ -793,12 +960,28 @@
     {#if showMemory}
       <aside class="memory-panel">
         <h3>Memory</h3>
-        {#each memoryBlocks as block}
-          <div class="mem-block">
-            <strong>{block.label}</strong>
-            <pre>{block.value}</pre>
-          </div>
-        {/each}
+        <div class="memory-tabs">
+          <button type="button" class:active={memoryTab === "blocks"} onclick={() => (memoryTab = "blocks")}>Blocks</button>
+          <button type="button" class:active={memoryTab === "open"} onclick={() => (memoryTab = "open")}>Open files</button>
+        </div>
+        {#if memoryTab === "blocks"}
+          {#each memoryBlocks as block}
+            <div class="mem-block">
+              <strong>{block.label}</strong>
+              <pre>{block.value}</pre>
+            </div>
+          {/each}
+        {:else}
+          {#each openFiles as f}
+            <div class="mem-block">
+              <strong>{f.file_name || f.file_id}</strong>
+              <pre>{f.summary || f.headline || "(no headline)"}</pre>
+              <small>cursor: {f.cursor_char ?? 0}</small>
+            </div>
+          {:else}
+            <p class="muted">No open files</p>
+          {/each}
+        {/if}
       </aside>
     {/if}
   </div>
@@ -836,10 +1019,18 @@
         rows="2"
         disabled={streaming}
       ></textarea>
-      <button onclick={send} disabled={streaming || (!input.trim() && !pendingAttachment)}>Send</button>
+      <button onclick={send} disabled={streaming || (!input.trim() && !pendingAttachment)}>
+        {streaming ? "Sending…" : "Send"}
+      </button>
     </div>
   </footer>
   <ImageViewer src={viewerSrc} bind:open={viewerOpen} />
+  <SystemContextModal
+    bind:open={showSystemContext}
+    content={systemContextContent}
+    summary={systemContextSummary}
+    loading={systemContextLoading}
+  />
 </div>
 
 {#snippet messageArticle(msg, regenerate = null)}
@@ -854,16 +1045,7 @@
         <pre class="wrap">{msg.reasoning}</pre>
       </details>
     {/if}
-    {#if msg.role === "system"}
-      <div class="system-context">
-        <button type="button" class="system-toggle" onclick={toggleSystemContext}>
-          {msg.collapsed ? msg.systemSummary : "[hide system context]"}
-        </button>
-        {#if !msg.collapsed}
-          <pre class="system-body">{msg.content}</pre>
-        {/if}
-      </div>
-    {:else if msg.role === "reasoning"}
+    {#if msg.role === "reasoning"}
       <details class="reasoning">
         <summary>Reasoning</summary>
         {#if msg.content}
@@ -1170,6 +1352,23 @@
     padding: 1rem;
     overflow-y: auto;
   }
+  .memory-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+  .memory-tabs button {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid #ccc;
+    background: #f9f9f9;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .memory-tabs button.active {
+    background: #e8f0fe;
+    border-color: #6b9bd1;
+  }
   .mem-block {
     margin-bottom: 1rem;
   }
@@ -1228,5 +1427,35 @@
     color: #dc2626;
     margin: 0;
     padding: 0.5rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    background: #fef2f2;
+    border-bottom: 1px solid #fecaca;
+  }
+  .streaming-banner {
+    margin: 0;
+    padding: 0.35rem 1rem;
+    font-size: 0.85rem;
+    color: #374151;
+    background: #f3f4f6;
+    border-bottom: 1px solid #e5e7eb;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .recover-btn,
+  .cancel-btn {
+    font-size: 0.8rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid #d1d5db;
+    background: #fff;
+    border-radius: 4px;
+    color: inherit;
+    cursor: pointer;
+  }
+  .ghost {
+    background: #fff;
   }
 </style>

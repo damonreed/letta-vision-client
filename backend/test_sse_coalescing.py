@@ -69,7 +69,13 @@ class StreamCoalescerTests(unittest.TestCase):
         self.assertEqual(len(reasoning), 1)
         self.assertEqual(_parse_sse(reasoning[0])["reasoning"], "The user wants help.")
 
-    def test_summary_message_maps_to_assistant_sse(self):
+    def test_ping_maps_to_keepalive_sse(self):
+        events = list(stream_events(iter([{"message_type": "ping"}])))
+        self.assertEqual(len(events), 1)
+        parsed = _parse_sse(events[0])
+        self.assertEqual(parsed["type"], "keepalive")
+        self.assertEqual(parsed["message_type"], "ping")
+
         events = list(
             stream_events(
                 iter(

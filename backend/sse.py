@@ -44,7 +44,9 @@ def _map_terminal_chunk(dumped: dict[str, Any]) -> str | None:
                 ),
             },
         )
-    if message_type in ("ping", "usage_statistics", "user_message", "system_message"):
+    if message_type == "ping":
+        return sse_event("keepalive", dumped)
+    if message_type in ("usage_statistics", "user_message", "system_message"):
         return None
     if message_type in ("approval_request_message", "approval_response_message"):
         return sse_event("message", dumped)

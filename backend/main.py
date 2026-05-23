@@ -11,6 +11,7 @@ from backend.routes import (
     blocks,
     conversations,
     folders,
+    file_memory,
     images,
     mcp,
     memory,
@@ -46,6 +47,7 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(agents.router)
 app.include_router(folders.router)
+app.include_router(file_memory.router)
 app.include_router(blocks.router)
 app.include_router(conversations.router)
 app.include_router(messages.router)
