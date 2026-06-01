@@ -1,6 +1,12 @@
 <script>
   import { onMount } from "svelte";
   import { api, modelHandle } from "../lib/api.js";
+  import FileViewerModal from "../lib/components/FileViewerModal.svelte";
+  import {
+    downloadTextContent,
+    fileDisplayName,
+    guessDownloadMimeType,
+  } from "../lib/fileDownload.js";
   import {
     agents,
     saveSelectedAgent,
@@ -17,14 +23,24 @@
   let embeddings = $state([]);
   let error = $state("");
   let uploading = $state(false);
+  let creatingText = $state(false);
   let showCreateFolder = $state(false);
+  let showCreateTextFile = $state(false);
+  let showFileViewer = $state(false);
+  let viewerFile = $state(null);
   let confirmDeleteFolder = $state(false);
   let confirmDeleteFileId = $state(null);
+  let downloadingFileId = $state(null);
 
   let createForm = $state({
     name: "",
     description: "",
     embedding: "",
+  });
+
+  let textFileForm = $state({
+    file_name: "",
+    content: "",
   });
 
   const selectedFolder = $derived(
@@ -192,6 +208,55 @@
     }
   }
 
+  function openCreateTextFile() {
+    textFileForm = { file_name: "", content: "" };
+    showCreateTextFile = true;
+  }
+
+  async function createTextFile() {
+    if (!selectedFolderId) return;
+    creatingText = true;
+    error = "";
+    try {
+      await api.createTextFile(selectedFolderId, {
+        file_name: textFileForm.file_name.trim(),
+        content: textFileForm.content,
+      });
+      showCreateTextFile = false;
+      files = await api.listFolderFiles(selectedFolderId);
+    } catch (err) {
+      error = err.message;
+    } finally {
+      creatingText = false;
+    }
+  }
+
+  function openFileViewer(file) {
+    viewerFile = file;
+    showFileViewer = true;
+  }
+
+  async function downloadFile(file) {
+    if (!selectedFolderId || !file?.id) return;
+    downloadingFileId = file.id;
+    error = "";
+    try {
+      const detail = await api.getFolderFile(selectedFolderId, file.id, true);
+      if (detail.content == null) {
+        throw new Error("No text content available to download");
+      }
+      downloadTextContent(
+        detail.content,
+        fileDisplayName(detail),
+        guessDownloadMimeType(fileDisplayName(detail), detail.file_type),
+      );
+    } catch (err) {
+      error = err.message;
+    } finally {
+      downloadingFileId = null;
+    }
+  }
+
   function formatBytes(n) {
     if (n == null) return "—";
     if (n < 1024) return `${n} B`;
@@ -200,7 +265,7 @@
   }
 
   function fileLabel(file) {
-    return file.file_name || file.original_file_name || file.id;
+    return fileDisplayName(file);
   }
 
   function embeddingLabel(folder) {
@@ -289,15 +354,20 @@
       <div class="files-section">
         <div class="files-header">
           <h3>Files</h3>
-          <label class="upload-btn">
-            <input
-              type="file"
-              multiple
-              disabled={uploading}
-              onchange={onFileInput}
-            />
-            {uploading ? "Uploading…" : "+ Upload"}
-          </label>
+          <div class="files-toolbar">
+            <button type="button" class="secondary-btn" onclick={openCreateTextFile}>
+              + New text file
+            </button>
+            <label class="upload-btn">
+              <input
+                type="file"
+                multiple
+                disabled={uploading}
+                onchange={onFileInput}
+              />
+              {uploading ? "Uploading…" : "+ Upload"}
+            </label>
+          </div>
         </div>
 
         {#if files.length === 0}
@@ -323,6 +393,17 @@
                     </span>
                   </td>
                   <td class="actions">
+                    <button type="button" class="link-btn" onclick={() => openFileViewer(file)}>
+                      View
+                    </button>
+                    <button
+                      type="button"
+                      class="link-btn"
+                      disabled={downloadingFileId === file.id}
+                      onclick={() => downloadFile(file)}
+                    >
+                      {downloadingFileId === file.id ? "…" : "Download"}
+                    </button>
                     {#if confirmDeleteFileId === file.id}
                       <button class="danger-btn" onclick={() => deleteFile(file.id)}>
                         Confirm
@@ -385,6 +466,45 @@
       <div class="modal-actions">
         <button onclick={createFolder} disabled={!createForm.name.trim()}>Create</button>
         <button onclick={() => (showCreateFolder = false)}>Cancel</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<FileViewerModal
+  bind:open={showFileViewer}
+  folderId={selectedFolderId}
+  file={viewerFile}
+/>
+
+{#if showCreateTextFile}
+  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+  <div
+    class="modal-backdrop"
+    role="presentation"
+    onclick={() => (showCreateTextFile = false)}
+  >
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="modal" role="dialog" onclick={(e) => e.stopPropagation()}>
+      <h2>Create text file</h2>
+      <div class="modal-body">
+        <label>
+          File name
+          <input bind:value={textFileForm.file_name} placeholder="notes.txt" />
+        </label>
+        <label>
+          Content
+          <textarea bind:value={textFileForm.content} rows="12"></textarea>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button
+          onclick={createTextFile}
+          disabled={creatingText || !textFileForm.file_name.trim()}
+        >
+          {creatingText ? "Creating…" : "Create"}
+        </button>
+        <button onclick={() => (showCreateTextFile = false)}>Cancel</button>
       </div>
     </div>
   </div>
@@ -508,6 +628,20 @@
     margin: 0;
     font-size: 0.95rem;
   }
+  .files-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .secondary-btn {
+    background: #f3f4f6;
+    border: 1px solid #ddd;
+    color: #111;
+    padding: 0.35rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
   .upload-btn {
     display: inline-block;
     padding: 0.35rem 0.75rem;
@@ -541,6 +675,18 @@
   .actions {
     text-align: right;
     white-space: nowrap;
+  }
+  .link-btn {
+    background: none;
+    border: none;
+    color: #2563eb;
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.15rem 0.35rem;
+  }
+  .link-btn:disabled {
+    color: #94a3b8;
+    cursor: wait;
   }
   .status {
     font-size: 0.75rem;

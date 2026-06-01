@@ -118,6 +118,12 @@ class CreateFolderRequest(BaseModel):
     embedding: str
 
 
+class CreateTextFileRequest(BaseModel):
+    file_name: str
+    content: str = ""
+    duplicate_handling: Literal["skip", "error", "suffix", "replace"] = "replace"
+
+
 class McpStdioConfig(BaseModel):
     mcp_server_type: Literal["stdio"] = "stdio"
     command: str

@@ -8,7 +8,7 @@ from backend.config import get_letta_client, get_settings
 from backend.context_refresh import recompile_agent_conversations, recompile_conversations_for_folder
 from backend.errors import http_error_from_exception
 from backend.letta_lists import collect_sync_page
-from backend.schemas import CreateFolderRequest, serialize
+from backend.schemas import CreateFolderRequest, CreateTextFileRequest, serialize
 
 DuplicateHandling = Literal["skip", "error", "suffix", "replace"]
 UPLOAD_CHUNK_SIZE = 1024 * 1024
@@ -60,6 +60,52 @@ def list_folder_files(folder_id: str):
     except Exception as e:
         raise HTTPException(status_code=404, detail={"error": str(e)}) from e
     return [serialize(f) for f in files]
+
+
+@router.get("/folders/{folder_id}/files/{file_id}")
+def get_folder_file(
+    folder_id: str,
+    file_id: str,
+    include_content: bool = Query(True, description="Include full file text in the response"),
+):
+    client = get_letta_client()
+    try:
+        file = client.folders.files.retrieve(
+            file_id,
+            folder_id=folder_id,
+            include_content=include_content,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=404, detail={"error": str(e)}) from e
+    return serialize(file)
+
+
+@router.post("/folders/{folder_id}/files/text")
+def create_text_file(folder_id: str, body: CreateTextFileRequest):
+    client = get_letta_client()
+    file_name = (body.file_name or "").strip()
+    if not file_name:
+        raise HTTPException(status_code=400, detail={"error": "file_name is required"})
+    content_bytes = body.content.encode("utf-8")
+    content_type = "text/plain"
+    if file_name.lower().endswith(".md"):
+        content_type = "text/markdown"
+    try:
+        result = client.folders.files.upload(
+            folder_id,
+            file=(file_name, content_bytes, content_type),
+            duplicate_handling=body.duplicate_handling,
+        )
+    except Exception as e:
+        raise http_error_from_exception(e, status_code=400) from e
+    payload = serialize(result)
+    try:
+        stats = recompile_conversations_for_folder(folder_id)
+        payload["context_refresh"] = stats
+    except Exception as exc:
+        logger.warning("Text file ok but context recompile failed for folder %s: %s", folder_id, exc)
+        payload["context_refresh"] = {"error": str(exc)}
+    return payload
 
 
 async def _read_upload_bounded(upload: UploadFile) -> bytes:

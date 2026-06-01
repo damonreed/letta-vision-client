@@ -176,6 +176,16 @@ export const api = {
   },
   deleteFolderFile: (folderId, fileId) =>
     request(`/folders/${folderId}/files/${fileId}`, { method: "DELETE" }),
+  getFolderFile: (folderId, fileId, includeContent = true) => {
+    const params = new URLSearchParams();
+    params.set("include_content", includeContent ? "true" : "false");
+    return request(`/folders/${folderId}/files/${fileId}?${params}`);
+  },
+  createTextFile: (folderId, body) =>
+    request(`/folders/${folderId}/files/text`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   listAgentFolders: (agentId) => request(`/agents/${agentId}/folders`),
   attachFolderToAgent: (agentId, folderId) =>
