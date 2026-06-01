@@ -46,12 +46,14 @@ export const TOOL_GROUPS = [
     tools: ["search_memory", "store_memories", "conversation_search"],
   },
   {
-    id: "file-archives",
-    label: "File archives",
+    id: "file-access",
+    label: "File Access and Search",
     tools: [
-      "write_archive",
-      "search_archives",
-      "update_file_core",
+      "add_text_file",
+      "write_file_archive",
+      "search_file_archives",
+      "update_file_headline",
+      "search_file_contents",
       "open_file",
       "close_file",
       "file_read_page",
@@ -62,11 +64,6 @@ export const TOOL_GROUPS = [
       "attach_folder",
       "detach_folder",
     ],
-  },
-  {
-    id: "file-contents",
-    label: "File contents search",
-    tools: ["search_file_contents"],
   },
   {
     id: "web",

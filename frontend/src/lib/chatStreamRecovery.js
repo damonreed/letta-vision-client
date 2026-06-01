@@ -3,13 +3,10 @@
 export const DEFAULT_STREAM_STALL_MS = 90_000;
 export const DEFAULT_STREAM_MAX_MS = 600_000;
 export const STALL_CHECK_INTERVAL_MS = 5_000;
-export const VISIBILITY_RECOVER_MS = 30_000;
-
 export const RECOVERY_MESSAGES = {
   stall: "Stream stalled with no updates — synced conversation from server.",
   maxDuration: "Stream exceeded the maximum duration — synced conversation from server.",
   abrupt: "Connection closed before the stream finished — synced conversation from server.",
-  visibility: "Tab was inactive — refreshed conversation from server.",
   online: "Network reconnected — refreshed conversation from server.",
   manual: "Conversation refreshed from server.",
   cancel: "Send cancelled — synced conversation from server.",
@@ -35,9 +32,27 @@ export function createStreamWatchdog({
   let timer = null;
   let stallTriggered = false;
   let maxTriggered = false;
+  let paused = false;
+  let pausedAt = 0;
 
   function touch() {
     lastActivityAt = Date.now();
+  }
+
+  /** Pause stall/max timers while the tab is hidden (timers are throttled in background). */
+  function setPaused(isPaused) {
+    if (isPaused && !paused) {
+      paused = true;
+      pausedAt = Date.now();
+      return;
+    }
+    if (!isPaused && paused) {
+      const hiddenMs = Date.now() - pausedAt;
+      paused = false;
+      pausedAt = 0;
+      lastActivityAt += hiddenMs;
+      startedAt += hiddenMs;
+    }
   }
 
   function start() {
@@ -45,6 +60,7 @@ export function createStreamWatchdog({
     touch();
     stop();
     timer = setInterval(() => {
+      if (paused) return;
       const now = Date.now();
       if (maxMs > 0 && !maxTriggered && now - startedAt >= maxMs) {
         maxTriggered = true;
@@ -63,7 +79,9 @@ export function createStreamWatchdog({
       clearInterval(timer);
       timer = null;
     }
+    paused = false;
+    pausedAt = 0;
   }
 
-  return { touch, start, stop };
+  return { touch, start, stop, setPaused };
 }

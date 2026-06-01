@@ -1,5 +1,7 @@
 const API = "/api";
 
+import { normalizeOutgoingForSend } from "./chatFailures.js";
+
 async function request(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
     headers: { "Content-Type": "application/json", ...options.headers },
@@ -20,6 +22,13 @@ export const api = {
     request("/agents", { method: "POST", body: JSON.stringify(body) }),
   updateAgent: (id, body) =>
     request(`/agents/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  getSystemPromptTemplate: (key = "letta_v1") =>
+    request(`/agents/system-prompt-template/${encodeURIComponent(key)}`),
+  saveAgentSystem: (id, system) =>
+    request(`/agents/${id}/system/save`, {
+      method: "POST",
+      body: JSON.stringify({ system }),
+    }),
   deleteAgent: (id) =>
     request(`/agents/${id}`, { method: "DELETE" }),
 
@@ -43,6 +52,12 @@ export const api = {
     }),
   deleteConversation: (conversationId) =>
     request(`/conversations/${conversationId}`, { method: "DELETE" }),
+
+  recompileContext: (agentId, conversationId) =>
+    request(
+      `/agents/${agentId}/conversations/${encodeURIComponent(conversationId)}/recompile-context`,
+      { method: "POST" }
+    ),
 
   listBlocks: (id) => request(`/agents/${id}/blocks`),
   updateBlock: (agentId, label, value) =>
@@ -185,13 +200,14 @@ export const api = {
     }),
 
   async *streamMessage(agentId, content, conversationId = null, { signal } = {}) {
+    const payloadContent = normalizeOutgoingForSend(content) ?? content;
     const params = conversationId
       ? `?conversation_id=${encodeURIComponent(conversationId)}`
       : "";
     const res = await fetch(`${API}/agents/${agentId}/messages${params}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content: payloadContent }),
       signal,
     });
     if (!res.ok) {

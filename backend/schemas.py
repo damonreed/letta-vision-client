@@ -27,17 +27,26 @@ class UpdateAgentRequest(BaseModel):
     embedding: str | None = None
     context_window_limit: int | None = None
     per_file_view_window_char_limit: int | None = None
+    system: str | None = None
+
+
+class SaveAgentSystemRequest(BaseModel):
+    system: str
 
 
 class ImageSourceBlock(BaseModel):
-    type: Literal["base64"] = "base64"
+    type: Literal["base64", "letta"] = "base64"
     media_type: str
     data: str
+    file_id: str | None = None
+    detail: str | None = None
 
 
 class TextContentBlock(BaseModel):
     type: Literal["text"] = "text"
     text: str
+
+    model_config = {"extra": "ignore"}
 
 
 class ImageContentBlock(BaseModel):

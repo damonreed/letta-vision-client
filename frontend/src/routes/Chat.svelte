@@ -4,11 +4,15 @@
   import { marked } from "marked";
   import { api } from "../lib/api.js";
   import { messageListKey, sortMessagesChronological, withUniqueMessageIds } from "../lib/messages.js";
+  import { splitAgentContent } from "../lib/markdown.js";
   import { buildDisplayGroups } from "../lib/chatDisplay.js";
   import {
     enrichStreamFailureRow,
     failureInjectedJsonFromContent,
+    dedupeServerHistory,
     findPrecedingUserGroup,
+    userGroupForFailedTurn,
+    isDismissibleFailureMessage,
     isFailedTurnGroup,
     isRegeneratableFailure,
     isRealUserMessage,
@@ -18,8 +22,13 @@
     unpackPackedFailure,
   } from "../lib/chatFailures.js";
   import {
+    dismissMessageId,
+    filterDismissedMessages,
+  } from "../lib/chatDismissed.js";
+  import {
     cachedOutgoing,
     cachedUserGroup,
+    commitUserTurnSuccess,
     loadUserTurn,
     saveUserTurn,
   } from "../lib/chatTurnCache.js";
@@ -28,7 +37,6 @@
     isKeepaliveEvent,
     isTerminalStreamEvent,
     RECOVERY_MESSAGES,
-    VISIBILITY_RECOVER_MS,
   } from "../lib/chatStreamRecovery.js";
   import { parseContent, imageSrcFromBlock, previewSrcForAttachment } from "../lib/contentBlocks.js";
   import {
@@ -71,6 +79,9 @@
   let systemContextContent = $state("");
   let systemContextSummary = $state("");
   let systemContextLoading = $state(false);
+  let systemContextRefreshing = $state(false);
+  let systemContextRefreshError = $state("");
+  let convIdCopied = $state(false);
   let memoryBlocks = $state([]);
   let memoryTab = $state("blocks");
   let openFiles = $state([]);
@@ -81,7 +92,7 @@
   let stickToBottom = $state(true);
   let draftAgentId = null;
   let draftConversationId = null;
-  /** @type {{ abort: AbortController, agentId: string, conversationId: string, streamId: number } | null} */
+  /** @type {{ abort: AbortController, agentId: string, conversationId: string, streamId: number, lifecycleDone: Promise<void> } | null} */
   let activeStream = null;
   let streamIdCounter = 0;
   let pendingAttachment = $state(null);
@@ -92,9 +103,10 @@
   let viewerSrc = $state(null);
   let viewerOpen = $state(false);
   let fileInput = $state(null);
-  let tabHiddenAt = null;
   let streamUserCancelled = false;
   let streamRecoveryReason = null;
+  /** @type {ReturnType<typeof createStreamWatchdog> | null} */
+  let activeWatchdog = null;
 
   const activeAgent = $derived(agentList.find((a) => a.id === agentId));
   const visionCapable = $derived(
@@ -119,6 +131,7 @@
 
   async function openSystemContext() {
     showSystemContext = true;
+    systemContextRefreshError = "";
     systemContextLoading = true;
     try {
       if (agentId && conversationId) {
@@ -135,6 +148,35 @@
       error = err.message;
     } finally {
       systemContextLoading = false;
+    }
+  }
+
+  async function refreshSystemContext() {
+    if (!agentId || !conversationId || systemContextRefreshing) return;
+    systemContextRefreshing = true;
+    systemContextRefreshError = "";
+    try {
+      const { content } = await api.recompileContext(agentId, conversationId);
+      systemContextContent = content || "";
+      systemContextSummary = content ? systemSummary(content) : "";
+      await loadHistory(agentId, conversationId);
+    } catch (err) {
+      systemContextRefreshError = err.message;
+    } finally {
+      systemContextRefreshing = false;
+    }
+  }
+
+  async function copyConversationId() {
+    if (!conversationId) return;
+    try {
+      await navigator.clipboard.writeText(conversationId);
+      convIdCopied = true;
+      setTimeout(() => {
+        convIdCopied = false;
+      }, 1500);
+    } catch {
+      /* clipboard unavailable */
     }
   }
 
@@ -203,17 +245,11 @@
 
     function onVisibilityChange() {
       if (document.visibilityState === "hidden") {
-        tabHiddenAt = Date.now();
+        activeWatchdog?.setPaused(true);
         return;
       }
-      if (
-        streaming &&
-        tabHiddenAt &&
-        Date.now() - tabHiddenAt >= VISIBILITY_RECOVER_MS
-      ) {
-        void recoverChat(RECOVERY_MESSAGES.visibility);
-      }
-      tabHiddenAt = null;
+      activeWatchdog?.setPaused(false);
+      activeWatchdog?.touch();
     }
 
     function onOnline() {
@@ -277,14 +313,14 @@
 
   function applyServerHistory(hist, { id = agentId, convId = conversationId } = {}) {
     let normalized = sortMessagesChronological(
-      hist.map(normalizeMessage).filter(Boolean)
+      dedupeServerHistory(hist).map(normalizeMessage).filter(Boolean)
     );
-    const latestUser = [...normalized].reverse().find(isRealUserMessage);
-    if (latestUser && id && convId) {
-      saveUserTurn(id, convId, latestUser, outgoingFromUserMessage(latestUser));
-    }
     normalized = mergeCachedUserTurn(loadUserTurn(id, convId), normalized);
-    messages = withUniqueMessageIds(normalized);
+    messages = filterDismissedMessages(
+      withUniqueMessageIds(normalized),
+      id,
+      convId
+    );
     refreshSystemContextFromMessages(messages);
   }
 
@@ -300,7 +336,12 @@
         return;
       }
       applyServerHistory(hist, { id: streamAgentId, convId: streamConversationId });
-      if (reason) error = reason;
+      if (reason) {
+        error = reason;
+      } else {
+        error = "";
+      }
+      streamRecoveryReason = null;
       stickToBottom = true;
       await scrollToBottom();
     } catch (err) {
@@ -311,15 +352,22 @@
   }
 
   async function recoverChat(reason = RECOVERY_MESSAGES.manual) {
+    const isManual = reason === RECOVERY_MESSAGES.manual;
+    const notifyReason = isManual ? null : reason;
+
     if (activeStream) {
-      streamRecoveryReason = reason;
+      streamRecoveryReason = notifyReason;
+      const lifecycleDone = activeStream.lifecycleDone;
       activeStream.abort.abort();
-    } else {
-      stopActiveStream();
-      if (agentId && conversationId) {
-        await syncConversationFromServer(agentId, conversationId, { reason });
-        await loadMemory(agentId);
+      if (lifecycleDone) {
+        await lifecycleDone;
       }
+      return;
+    }
+    stopActiveStream();
+    if (agentId && conversationId) {
+      await syncConversationFromServer(agentId, conversationId, { reason: notifyReason });
+      await loadMemory(agentId);
     }
   }
 
@@ -469,6 +517,15 @@
       content = JSON.stringify(m.tool_call, null, 2);
     }
 
+    if (
+      type === "assistant_message" &&
+      !failureNotice &&
+      typeof content === "string" &&
+      !content.trim()
+    ) {
+      return null;
+    }
+
     const toolDisplayImages =
       role === "tool_result" ? getToolResultDisplayImages(m) : [];
 
@@ -603,11 +660,16 @@
     const streamConversationId = conversationId;
     const streamId = ++streamIdCounter;
     const abort = new AbortController();
+    let resolveLifecycle = null;
+    const lifecycleDone = new Promise((resolve) => {
+      resolveLifecycle = resolve;
+    });
     activeStream = {
       abort,
       agentId: streamAgentId,
       conversationId: streamConversationId,
       streamId,
+      lifecycleDone,
     };
 
     streaming = true;
@@ -625,6 +687,7 @@
     let pendingReasoning = "";
     let streamPart = 0;
     let sawTerminal = false;
+    let streamHadFailure = false;
 
     const watchdog = createStreamWatchdog({
       onStall: () => {
@@ -638,6 +701,10 @@
         abort.abort();
       },
     });
+    activeWatchdog = watchdog;
+    if (document.visibilityState === "hidden") {
+      watchdog.setPaused(true);
+    }
     watchdog.start();
 
     try {
@@ -707,12 +774,14 @@
               collapsed: false,
             };
             row = enrichStreamFailureRow(row, chunk);
+            if (isRegeneratableFailure(row)) streamHadFailure = true;
             messages = withUniqueMessageIds([...messages, row]);
             assistantIdx = messages.length - 1;
           } else {
             const merged = (messages[assistantIdx].content || "") + (chunk || "");
             messages[assistantIdx].content = stripEmbeddedFailureJsonFence(merged);
             enrichStreamFailureRow(messages[assistantIdx], messages[assistantIdx].content);
+            if (isRegeneratableFailure(messages[assistantIdx])) streamHadFailure = true;
             messages = [...messages];
           }
         } else if (event.type === "tool_call") {
@@ -737,6 +806,7 @@
         } else if (event.type === "done") {
           break;
         } else if (event.type === "error") {
+          streamHadFailure = true;
           const errText =
             event.message ||
             event.detail ||
@@ -770,17 +840,27 @@
       }
     } finally {
       watchdog.stop();
-      if (isCurrentStream(streamId)) {
-        activeStream = null;
-        streaming = false;
-        try {
-          await syncConversationFromServer(streamAgentId, streamConversationId, {
-            reason: streamRecoveryReason,
-          });
-          await loadMemory(streamAgentId);
-        } catch {
-          /* syncConversationFromServer sets error when needed */
+      if (activeWatchdog === watchdog) {
+        activeWatchdog = null;
+      }
+      try {
+        if (isCurrentStream(streamId)) {
+          activeStream = null;
+          streaming = false;
+          try {
+            await syncConversationFromServer(streamAgentId, streamConversationId, {
+              reason: streamRecoveryReason,
+            });
+            await loadMemory(streamAgentId);
+            if (!streamRecoveryReason && !streamHadFailure) {
+              commitUserTurnSuccess(streamAgentId, streamConversationId);
+            }
+          } catch {
+            /* syncConversationFromServer sets error when needed */
+          }
         }
+      } finally {
+        resolveLifecycle?.();
       }
     }
   }
@@ -816,8 +896,9 @@
   }
 
   function resolveUserGroupForFailure(groupIndex) {
-    return (
-      findPrecedingUserGroup(displayGroups, groupIndex) ||
+    return userGroupForFailedTurn(
+      displayGroups,
+      groupIndex,
       cachedUserGroup(agentId, conversationId)
     );
   }
@@ -835,7 +916,29 @@
       return;
     }
 
-    await runMessageStream(outgoing);
+    const hasUserInThread =
+      userMsg &&
+      messages.some(
+        (m) =>
+          m.id === userMsg.id ||
+          (isRealUserMessage(m) &&
+            m.content === userMsg.content &&
+            Boolean(m.contentBlocks?.length) === Boolean(userMsg.contentBlocks?.length))
+      );
+
+    await runMessageStream(outgoing, {
+      appendUserBubble: Boolean(userMsg && !hasUserInThread),
+      userBubble: userMsg,
+    });
+  }
+
+  function deleteChatMessage(msg) {
+    if (!msg?.id || !agentId || !conversationId) return;
+    dismissMessageId(agentId, conversationId, msg.id);
+    messages = messages.filter((m) => m.id !== msg.id);
+    if (isDismissibleFailureMessage(msg)) {
+      error = "";
+    }
   }
 
   function extractText(content) {
@@ -899,6 +1002,16 @@
     >
       context
     </button>
+    {#if conversationId}
+      <button
+        type="button"
+        class="conv-id-btn"
+        title={convIdCopied ? "Copied!" : "Copy conversation ID"}
+        onclick={copyConversationId}
+      >
+        {convIdCopied ? "copied" : conversationId}
+      </button>
+    {/if}
   </header>
 
   {#if error}
@@ -1030,6 +1143,9 @@
     content={systemContextContent}
     summary={systemContextSummary}
     loading={systemContextLoading}
+    refreshing={systemContextRefreshing}
+    refreshError={systemContextRefreshError}
+    onRefresh={agentId && conversationId ? refreshSystemContext : null}
   />
 </div>
 
@@ -1089,7 +1205,15 @@
         </details>
       {/if}
     {:else if msg.role === "agent"}
-      <div class="content md">{@html renderMarkdown(msg.content)}</div>
+      <div class="content md">
+        {#each splitAgentContent(msg.content) as part, pi (pi)}
+          {#if part.type === "literal"}
+            <pre class="letta-xml-block">{part.text}</pre>
+          {:else if part.text.trim()}
+            <div class="md-part">{@html renderMarkdown(part.text)}</div>
+          {/if}
+        {/each}
+      </div>
       {#if msg.injectedContextJson}
         <details class="injected-context">
           <summary>Provider failure record (JSON)</summary>
@@ -1117,18 +1241,31 @@
     {:else}
       <div class="content"><pre class="wrap">{msg.content}</pre></div>
     {/if}
-    {#if regenerate}
+    {#if regenerate || isDismissibleFailureMessage(msg)}
       <div class="msg-actions">
-        <button
-          type="button"
-          class="regenerate-btn"
-          title="Regenerate"
-          disabled={streaming}
-          onclick={() => regenerateTurn(regenerate.failedGroup, regenerate.userGroup)}
-        >
-          <span class="regenerate-icon" aria-hidden="true">↻</span>
-          Regenerate
-        </button>
+        {#if regenerate}
+          <button
+            type="button"
+            class="regenerate-btn"
+            title="Regenerate"
+            disabled={streaming}
+            onclick={() => regenerateTurn(regenerate.failedGroup, regenerate.userGroup)}
+          >
+            <span class="regenerate-icon" aria-hidden="true">↻</span>
+            Regenerate
+          </button>
+        {/if}
+        {#if isDismissibleFailureMessage(msg)}
+          <button
+            type="button"
+            class="delete-btn"
+            title="Remove this error from the chat"
+            disabled={streaming}
+            onclick={() => deleteChatMessage(msg)}
+          >
+            Delete
+          </button>
+        {/if}
       </div>
     {/if}
   </article>
@@ -1147,10 +1284,12 @@
     background: #fff;
     border-bottom: 1px solid #ddd;
     align-items: center;
+    flex-wrap: wrap;
   }
   .chat-header select {
-    flex: 1;
+    flex: 0 1 auto;
     max-width: 320px;
+    min-width: 140px;
   }
   .memory-btn {
     font-size: 0.8rem;
@@ -1158,6 +1297,24 @@
     border: 1px solid #ccc;
     background: #f9f9f9;
     border-radius: 4px;
+  }
+  .conv-id-btn {
+    font-size: 0.72rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #e5e7eb;
+    background: #fff;
+    border-radius: 4px;
+    color: #374151;
+    flex-shrink: 0;
+    width: max-content;
+    max-width: 100%;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .conv-id-btn:hover {
+    background: #f3f4f6;
+    border-color: #d1d5db;
   }
   .chat-body {
     flex: 1;
@@ -1181,6 +1338,8 @@
     border-radius: 8px;
     padding: 0.75rem 1rem;
     max-width: 85%;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .msg.user {
     align-self: flex-end;
@@ -1190,7 +1349,8 @@
     border-left: 3px solid #c62828;
     background: #ffebee;
   }
-  .msg.agent:has(.msg-actions) {
+  .msg.agent:has(.msg-actions),
+  .msg.error:has(.msg-actions) {
     border-left: 3px solid #f59e0b;
   }
   .msg-actions {
@@ -1217,6 +1377,23 @@
     border-color: #9ca3af;
   }
   .regenerate-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .delete-btn {
+    padding: 0.3rem 0.55rem;
+    font-size: 0.8rem;
+    color: #991b1b;
+    background: #fff;
+    border: 1px solid #fca5a5;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .delete-btn:hover:not(:disabled) {
+    background: #fef2f2;
+    border-color: #f87171;
+  }
+  .delete-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
@@ -1342,8 +1519,59 @@
     background: #f9fafb;
     border-style: dotted;
   }
+  .content.md {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
   .content.md :global(p) {
     margin: 0.25rem 0;
+  }
+  .content.md :global(ul),
+  .content.md :global(ol) {
+    margin: 0.35rem 0;
+    padding-left: 1.25rem;
+  }
+  .content.md pre.letta-xml-block {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    max-width: 100%;
+    background: #f5f5f5;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    margin: 0.5rem 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.85rem;
+    border: none;
+  }
+  .content.md .md-part :global(p:first-child) {
+    margin-top: 0;
+  }
+  .content.md .md-part :global(p:last-child) {
+    margin-bottom: 0;
+  }
+  .content.md :global(pre) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    max-width: 100%;
+    overflow-x: auto;
+    background: #f5f5f5;
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    margin: 0.5rem 0;
+    font-size: 0.85rem;
+  }
+  .content.md :global(pre code) {
+    white-space: inherit;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  .content.md :global(:not(pre) > code) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
   .memory-panel {
     width: 280px;

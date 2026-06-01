@@ -5,6 +5,7 @@
     activeConversationId,
     agents,
     clearSelectedAgent,
+    currentTab,
     pickConversationForAgent,
     saveSelectedAgent,
     selectedAgentId,
@@ -30,6 +31,9 @@
   let attachedToolIds = $state([]);
   let toast = $state("");
   let agentSubtab = $state("blocks");
+  let systemDraft = $state("");
+  let systemBusy = $state(false);
+  let systemMessage = $state("");
 
   let editingName = $state(false);
   let editName = $state("");
@@ -63,11 +67,20 @@
     const u1 = agents.subscribe((a) => (agentList = a));
     const u2 = selectedAgentId.subscribe((id) => {
       selectedId = id;
-      if (id) loadDetail(id);
+      if (id) {
+        agentSubtab = "blocks";
+        loadDetail(id);
+      }
+    });
+    const u3 = currentTab.subscribe((tab) => {
+      if (tab === "agents") {
+        api.listTools().then((t) => (allTools = t)).catch(() => {});
+      }
     });
     return () => {
       u1();
       u2();
+      u3();
     };
   });
 
@@ -93,11 +106,56 @@
 
   function setAgentSubtab(tab) {
     agentSubtab = tab;
+    if (tab === "system" && detail) {
+      systemDraft = detail.system ?? "";
+      systemMessage = "";
+    }
+  }
+
+  function syncSystemDraftFromDetail() {
+    if (detail) systemDraft = detail.system ?? "";
+  }
+
+  async function refreshSystemTemplate() {
+    if (!selectedId) return;
+    systemBusy = true;
+    systemMessage = "";
+    error = "";
+    try {
+      const res = await api.getSystemPromptTemplate("letta_v1");
+      systemDraft = res.text ?? "";
+      systemMessage = "Loaded current letta_v1 template (not saved until you click Save).";
+    } catch (err) {
+      error = err.message;
+    } finally {
+      systemBusy = false;
+    }
+  }
+
+  async function saveAgentSystem() {
+    if (!selectedId) return;
+    systemBusy = true;
+    systemMessage = "";
+    error = "";
+    try {
+      const res = await api.saveAgentSystem(selectedId, systemDraft);
+      detail = res.agent;
+      syncSystemDraftFromDetail();
+      const n = res.recompiled ?? 0;
+      systemMessage =
+        n > 0
+          ? `Saved and recompiled context for ${n} conversation(s).`
+          : "Saved agent system prompt.";
+      showToast(systemMessage);
+    } catch (err) {
+      error = err.message;
+    } finally {
+      systemBusy = false;
+    }
   }
 
   async function loadDetail(id) {
     error = "";
-    agentSubtab = "blocks";
     editingName = false;
     editingModel = false;
     editingContextWindow = false;
@@ -105,6 +163,7 @@
     editingFilePreviewLimit = false;
     try {
       detail = await api.getAgent(id);
+      syncSystemDraftFromDetail();
       blocks = await api.listBlocks(id);
       attachedToolIds = (detail.tools || []).map((t) => t.id);
     } catch (err) {
@@ -371,10 +430,12 @@
             class:selected={agent.id === selectedId}
             onclick={() => selectAgent(agent.id)}
           >
-            <strong>{agent.name}</strong>
-            {#if modelSupportsVision(agent.model, modelObjects)}
-              <span class="vision-badge" title="This agent's model can see images.">Vision</span>
-            {/if}
+            <span class="list-title-row">
+              <strong>{agent.name}</strong>
+              {#if modelSupportsVision(agent.model, modelObjects)}
+                <span class="vision-badge" title="This agent's model can see images.">Vision</span>
+              {/if}
+            </span>
             <span class="meta">{agent.model || "—"}</span>
           </button>
         </li>
@@ -397,7 +458,12 @@
           </div>
         {:else}
           <h2 class="editable-title">
-            <span>{detail.name}</span>
+            <span class="title-row">
+              <span>{detail.name}</span>
+              {#if modelSupportsVision(detail.model, modelObjects)}
+                <span class="vision-badge" title="This agent's model can see images.">Vision</span>
+              {/if}
+            </span>
             <button
               type="button"
               class="edit-btn"
@@ -524,6 +590,13 @@
           >
             Files
           </button>
+          <button
+            type="button"
+            class:active={agentSubtab === "system"}
+            onclick={() => setAgentSubtab("system")}
+          >
+            System
+          </button>
         </nav>
 
         <div class="subtab-panel">
@@ -537,6 +610,40 @@
             />
           {:else if agentSubtab === "files"}
             <AgentFiles agentId={selectedId} onError={(msg) => (error = msg)} />
+          {:else if agentSubtab === "system"}
+            <div class="system-prompt-panel">
+              <div class="system-prompt-toolbar">
+                <button
+                  type="button"
+                  disabled={systemBusy}
+                  onclick={refreshSystemTemplate}
+                >
+                  Refresh
+                </button>
+                <button
+                  type="button"
+                  class="primary"
+                  disabled={systemBusy}
+                  onclick={saveAgentSystem}
+                >
+                  Save
+                </button>
+                <span class="system-hint">
+                  Refresh loads the live <code>letta_v1</code> template from the server.
+                  Save persists this text as <code>agent.system</code> and recompiles conversations.
+                </span>
+              </div>
+              {#if systemMessage}
+                <p class="system-status">{systemMessage}</p>
+              {/if}
+              <textarea
+                class="system-prompt-editor"
+                bind:value={systemDraft}
+                disabled={systemBusy}
+                spellcheck="false"
+                aria-label="Agent system prompt"
+              ></textarea>
+            </div>
           {:else}
             {#if toast}<p class="toast">{toast}</p>{/if}
             <ToolSelector
@@ -663,7 +770,28 @@
   .list li button.selected {
     background: #eff6ff;
   }
-  .vision-badge { font-size: 0.7rem; color: #1d4ed8; margin-left: 0.35rem; }
+  .title-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .vision-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #1d4ed8;
+    background: #dbeafe;
+    border-radius: 4px;
+    padding: 0.1rem 0.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .list-title-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
   .meta {
     font-size: 0.75rem;
     color: #666;
@@ -706,6 +834,61 @@
     color: #2563eb;
     font-weight: 600;
     border-bottom-color: #2563eb;
+  }
+  .system-prompt-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-height: 0;
+    flex: 1;
+  }
+  .system-prompt-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+  .system-prompt-toolbar button.primary {
+    background: #2563eb;
+    color: #fff;
+    border: none;
+  }
+  .system-prompt-toolbar button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .system-hint {
+    flex: 1 1 12rem;
+    font-size: 0.8rem;
+    color: #6b7280;
+    line-height: 1.35;
+  }
+  .system-hint code {
+    font-size: 0.85em;
+  }
+  .system-status {
+    margin: 0;
+    font-size: 0.85rem;
+    color: #047857;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    padding: 0.4rem 0.6rem;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .system-prompt-editor {
+    flex: 1;
+    min-height: 20rem;
+    width: 100%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    padding: 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    resize: vertical;
+    box-sizing: border-box;
   }
   .subtab-panel {
     flex: 1;

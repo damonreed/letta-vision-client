@@ -17,9 +17,9 @@ FILE_TOOL_NAMES = {
     "file_read_prev_page",
     "file_read_range",
     "file_grep",
-    "update_file_core",
-    "write_archive",
-    "search_archives",
+    "update_file_headline",
+    "write_file_archive",
+    "search_file_archives",
     "search_file_contents",
 }
 

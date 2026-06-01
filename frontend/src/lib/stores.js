@@ -7,15 +7,25 @@ export const conversations = writable([]);
 export const activeConversationId = writable(null);
 export const modelsCache = writable([]);
 
+function normalizeModelBasename(value) {
+  if (!value || typeof value !== "string") return "";
+  const tail = value.includes("/") ? value.split("/").pop() : value;
+  return tail.toLowerCase().replace(/_/g, "-");
+}
+
+function modelRowMatchesHandle(row, modelHandle) {
+  if (!row || !modelHandle) return false;
+  const candidates = [row.handle, row.name, row.model].filter(Boolean);
+  if (candidates.includes(modelHandle)) return true;
+  const want = normalizeModelBasename(modelHandle);
+  if (!want) return false;
+  return candidates.some((c) => normalizeModelBasename(c) === want);
+}
+
 /** @param {string} modelHandle */
 export function modelSupportsVision(modelHandle, models) {
   if (!modelHandle || !models?.length) return false;
-  const m = models.find(
-    (x) =>
-      x.handle === modelHandle ||
-      x.name === modelHandle ||
-      x.model === modelHandle,
-  );
+  const m = models.find((x) => modelRowMatchesHandle(x, modelHandle));
   if (!m) return false;
   if (m.vision_override != null) return Boolean(m.vision_override);
   return Boolean(m.supports_vision);

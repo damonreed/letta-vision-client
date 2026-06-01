@@ -25,11 +25,20 @@ function packedFailureFromContent(content) {
   return unpackPackedFailure(content);
 }
 
+const PROVIDER_FAILURE_MARKERS = [
+  "The model provider failed to return a usable response",
+  "The model provider returned an error and this step could not complete",
+];
+
 export function isFailureNoticeText(text) {
   return (
     typeof text === "string" &&
-    text.includes("The model provider failed to return a usable response")
+    PROVIDER_FAILURE_MARKERS.some((marker) => text.includes(marker))
   );
+}
+
+export function isDismissibleFailureMessage(msg) {
+  return isStreamErrorMessage(msg) || isLlmFailureMessage(msg);
 }
 
 export function isLlmFailureMessage(msg) {
@@ -41,6 +50,43 @@ export function isLlmFailureMessage(msg) {
 
 export function isRealUserMessage(msg) {
   return msg?.role === "user" && !isLlmFailureMessage(msg);
+}
+
+export function isPackedFailurePersistenceRow(raw) {
+  if (raw?.message_type !== "user_message") return false;
+  const content = typeof raw?.content === "string" ? raw.content : "";
+  return Boolean(unpackPackedFailure(content));
+}
+
+function failureAttemptsFromRow(raw) {
+  const content = typeof raw?.content === "string" ? raw.content : "";
+  const packed = unpackPackedFailure(content);
+  const stats = packed?.llm_failure_stats || packed?.degraded_failure_stats;
+  return stats?.attempts ?? 0;
+}
+
+/** Drop duplicate persisted failure rows (same run/step) from server history. */
+export function dedupeServerHistory(messages) {
+  const keepIndex = new Map();
+
+  messages.forEach((m, i) => {
+    if (!isPackedFailurePersistenceRow(m)) return;
+    const key = `${m.run_id || ""}:${m.step_id || ""}`;
+    const prevIdx = keepIndex.get(key);
+    if (prevIdx === undefined) {
+      keepIndex.set(key, i);
+      return;
+    }
+    if (failureAttemptsFromRow(m) >= failureAttemptsFromRow(messages[prevIdx])) {
+      keepIndex.set(key, i);
+    }
+  });
+
+  const keptFailureIndices = new Set(keepIndex.values());
+  return messages.filter((m, i) => {
+    if (!isPackedFailurePersistenceRow(m)) return true;
+    return keptFailureIndices.has(i);
+  });
 }
 
 export function isStreamErrorMessage(msg) {
@@ -72,16 +118,46 @@ export function findPrecedingUserGroup(groups, index) {
 }
 
 export function mergeCachedUserTurn(cached, messages) {
-  if (!cached?.userMsg) return messages;
-  if (messages.some(isRealUserMessage)) return messages;
-  if (!messages.some(isRegeneratableFailure)) return messages;
-  const idx = messages.findIndex(isRegeneratableFailure);
-  if (idx < 0) return messages;
-  return [
-    ...messages.slice(0, idx),
-    { ...cached.userMsg, role: "user", type: "user_message", collapsed: false },
-    ...messages.slice(idx),
-  ];
+  const stack = cached?.stack?.length
+    ? [...cached.stack]
+    : cached?.userMsg
+      ? [{ userMsg: cached.userMsg, outgoing: cached.outgoing }]
+      : [];
+  if (!stack.length) return messages;
+
+  let out = [...messages];
+  for (let fi = out.length - 1; fi >= 0 && stack.length; fi--) {
+    if (!isRegeneratableFailure(out[fi])) continue;
+    const prev = fi > 0 ? out[fi - 1] : null;
+    if (prev && isRealUserMessage(prev)) continue;
+    const entry = stack.pop();
+    if (!entry?.userMsg) continue;
+    out = [
+      ...out.slice(0, fi),
+      { ...entry.userMsg, role: "user", type: "user_message", collapsed: false },
+      ...out.slice(fi),
+    ];
+  }
+  return out;
+}
+
+/** User turn to resend when regenerating a failure group in the transcript. */
+export function userGroupForFailedTurn(groups, groupIndex, cachedUserGroup) {
+  const group = groups[groupIndex];
+  const isFailure =
+    group?.type === "single"
+      ? group.messages?.some(isRegeneratableFailure)
+      : isFailedTurnGroup(group);
+  if (!isFailure) {
+    return findPrecedingUserGroup(groups, groupIndex) || cachedUserGroup;
+  }
+
+  const prev = groupIndex > 0 ? groups[groupIndex - 1] : null;
+  if (prev?.type === "user" && isRealUserMessage(prev.messages?.[0])) {
+    return prev;
+  }
+
+  return cachedUserGroup || findPrecedingUserGroup(groups, groupIndex);
 }
 
 export function failureInjectedJsonFromContent(content) {
@@ -116,13 +192,50 @@ function stripFailureNoticeText(text) {
   return text.slice(0, idx).trimEnd() || text;
 }
 
+/** Convert history/SDK blocks into the bridge POST schema (base64 image sources). */
+export function normalizeOutgoingForSend(outgoing) {
+  if (outgoing == null) return null;
+  if (typeof outgoing === "string") {
+    const text = outgoing.trim();
+    return text || null;
+  }
+  if (!Array.isArray(outgoing)) return null;
+
+  const parts = [];
+  for (const block of outgoing) {
+    if (!block || typeof block !== "object") continue;
+    if (block.type === "text") {
+      const text = typeof block.text === "string" ? block.text.trim() : "";
+      if (text) parts.push({ type: "text", text });
+      continue;
+    }
+    if (block.type === "image") {
+      const src = block.source || {};
+      const data = typeof src.data === "string" ? src.data : "";
+      if (!data) continue;
+      const media_type =
+        typeof src.media_type === "string" && src.media_type
+          ? src.media_type
+          : "image/png";
+      parts.push({
+        type: "image",
+        source: { type: "base64", media_type, data },
+      });
+    }
+  }
+
+  if (!parts.length) return null;
+  if (parts.length === 1 && parts[0].type === "text") return parts[0].text;
+  return parts;
+}
+
 export function outgoingFromUserMessage(msg) {
   if (!msg) return null;
   if (Array.isArray(msg.contentBlocks) && msg.contentBlocks.length) {
-    return msg.contentBlocks;
+    return normalizeOutgoingForSend(msg.contentBlocks);
   }
   const text = typeof msg.content === "string" ? msg.content.trim() : "";
-  return text || null;
+  return normalizeOutgoingForSend(text);
 }
 
 export function turnMessageIds(group) {

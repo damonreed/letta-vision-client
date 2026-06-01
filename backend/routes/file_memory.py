@@ -65,5 +65,5 @@ def list_file_archives(file_id: str):
 
 
 @router.post("/file-archives/search")
-def search_archives(body: ArchiveSearchRequest):
+def search_file_archives(body: ArchiveSearchRequest):
     return _letta_request("POST", "/archives/search", json=body.model_dump())

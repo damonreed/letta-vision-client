@@ -4,6 +4,9 @@
     content = "",
     summary = "",
     loading = false,
+    refreshing = false,
+    refreshError = "",
+    onRefresh = null,
   } = $props();
 </script>
 
@@ -11,7 +14,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="backdrop" onclick={() => (open = false)} role="presentation">
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="System context">
+    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="System context" tabindex="-1">
       <header class="modal-header">
         <div>
           <h2>System context</h2>
@@ -19,8 +22,23 @@
             <p class="summary">{summary}</p>
           {/if}
         </div>
-        <button type="button" class="close" onclick={() => (open = false)} aria-label="Close">×</button>
+        <div class="header-actions">
+          {#if onRefresh}
+            <button
+              type="button"
+              class="refresh-btn"
+              disabled={loading || refreshing}
+              onclick={() => onRefresh()}
+            >
+              {refreshing ? "Refreshing…" : "Refresh context"}
+            </button>
+          {/if}
+          <button type="button" class="close" onclick={() => (open = false)} aria-label="Close">×</button>
+        </div>
       </header>
+      {#if refreshError}
+        <p class="refresh-error">{refreshError}</p>
+      {/if}
       <div class="modal-body">
         {#if loading}
           <p class="muted">Loading…</p>
@@ -72,6 +90,28 @@
     font-size: 0.85rem;
     color: #6b7280;
   }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+  .refresh-btn {
+    font-size: 0.8rem;
+    padding: 0.35rem 0.65rem;
+    border: 1px solid #d1d5db;
+    background: #f9fafb;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .refresh-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+  }
+  .refresh-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
   .close {
     border: none;
     background: none;
@@ -83,6 +123,14 @@
   }
   .close:hover {
     color: #111;
+  }
+  .refresh-error {
+    margin: 0;
+    padding: 0.5rem 1.25rem;
+    font-size: 0.85rem;
+    color: #b91c1c;
+    background: #fef2f2;
+    border-bottom: 1px solid #fecaca;
   }
   .modal-body {
     overflow: auto;

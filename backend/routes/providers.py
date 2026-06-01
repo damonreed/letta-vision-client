@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 import httpx
@@ -58,6 +59,27 @@ def _httpx_get(path: str, *, params: list[tuple[str, str]] | None = None) -> Any
     if res.status_code >= 400:
         raise _http_error(res)
     return res.json()
+
+
+def _provider_slug(name: str) -> str:
+    raw = (name or "byok").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    return slug or "byok"
+
+
+def _model_matches_provider(model: dict, provider: dict) -> bool:
+    name = provider.get("name")
+    if not name:
+        return False
+    if model.get("provider_name") == name:
+        return True
+    handle = model.get("handle") or ""
+    if handle.startswith(f"{name}/"):
+        return True
+    slug = _provider_slug(name)
+    if handle.startswith(f"openai-proxy/{slug}/"):
+        return True
+    return False
 
 
 def _httpx_request(method: str, path: str, *, json: dict | None = None) -> Any:
@@ -128,12 +150,7 @@ def list_provider_models(provider_id: str):
     rows = [serialize(m) for m in models]
     from backend.model_overrides import apply_model_row_overrides
 
-    matched = [
-        m
-        for m in rows
-        if m.get("provider_name") == name
-        or (name and m.get("handle", "").startswith(f"{name}/"))
-    ]
+    matched = [m for m in rows if _model_matches_provider(m, provider)]
     return [apply_model_row_overrides(m) for m in matched]
 
 

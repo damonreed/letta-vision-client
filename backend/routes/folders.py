@@ -1,15 +1,19 @@
+import logging
 import os
 from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from backend.config import get_letta_client, get_settings
+from backend.context_refresh import recompile_agent_conversations, recompile_conversations_for_folder
 from backend.errors import http_error_from_exception
 from backend.letta_lists import collect_sync_page
 from backend.schemas import CreateFolderRequest, serialize
 
 DuplicateHandling = Literal["skip", "error", "suffix", "replace"]
 UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["folders"])
 
@@ -96,7 +100,14 @@ async def upload_folder_file(
         )
     except Exception as e:
         raise http_error_from_exception(e, status_code=400) from e
-    return serialize(result)
+    payload = serialize(result)
+    try:
+        stats = recompile_conversations_for_folder(folder_id)
+        payload["context_refresh"] = stats
+    except Exception as exc:
+        logger.warning("Upload ok but context recompile failed for folder %s: %s", folder_id, exc)
+        payload["context_refresh"] = {"error": str(exc)}
+    return payload
 
 
 @router.delete("/folders/{folder_id}/files/{file_id}")
@@ -106,7 +117,12 @@ def delete_folder_file(folder_id: str, file_id: str):
         client.folders.files.delete(file_id, folder_id=folder_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
-    return {"ok": True}
+    try:
+        stats = recompile_conversations_for_folder(folder_id)
+        return {"ok": True, "context_refresh": stats}
+    except Exception as exc:
+        logger.warning("Delete ok but context recompile failed for folder %s: %s", folder_id, exc)
+        return {"ok": True, "context_refresh": {"error": str(exc)}}
 
 
 @router.get("/agents/{agent_id}/folders")
@@ -126,7 +142,12 @@ def attach_folder_to_agent(agent_id: str, folder_id: str):
         client.agents.folders.attach(folder_id, agent_id=agent_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
-    return {"ok": True}
+    try:
+        count = recompile_agent_conversations(client, agent_id)
+        return {"ok": True, "context_refresh": {"agents": 1, "recompiled": count}}
+    except Exception as exc:
+        logger.warning("Attach ok but context recompile failed for agent %s: %s", agent_id, exc)
+        return {"ok": True, "context_refresh": {"error": str(exc)}}
 
 
 @router.delete("/agents/{agent_id}/folders/{folder_id}/detach")
@@ -136,4 +157,9 @@ def detach_folder_from_agent(agent_id: str, folder_id: str):
         client.agents.folders.detach(folder_id, agent_id=agent_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
-    return {"ok": True}
+    try:
+        count = recompile_agent_conversations(client, agent_id)
+        return {"ok": True, "context_refresh": {"agents": 1, "recompiled": count}}
+    except Exception as exc:
+        logger.warning("Detach ok but context recompile failed for agent %s: %s", agent_id, exc)
+        return {"ok": True, "context_refresh": {"error": str(exc)}}

@@ -9,7 +9,11 @@ function blockDedupeKey(block) {
   if (!block || typeof block !== "object") return "";
   if (block.type === "image") {
     const src = block.source || {};
-    if (src.data) return `img:data:${src.data.length}:${src.data.slice(0, 64)}`;
+    if (src.data) {
+      const d = src.data;
+      // Full payload key — E2B often emits the same PNG on display + main results.
+      return `img:${src.media_type || "image/png"}:${d.length}:${d}`;
+    }
   }
   if (block.type === "text") return `text:${(block.text || "").slice(0, 256)}`;
   return JSON.stringify(block).slice(0, 128);

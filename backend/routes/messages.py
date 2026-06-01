@@ -17,6 +17,36 @@ def _conv_id(conversation_id: str | None) -> str:
     return conversation_id or DEFAULT_CONVERSATION_ID
 
 
+def _normalize_input_content(content: str | list) -> str | list:
+    """Map Letta history blocks (e.g. source.type=letta) to bridge send schema."""
+    if isinstance(content, str):
+        return content
+    normalized: list[dict] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            text = block.get("text")
+            if isinstance(text, str) and text.strip():
+                normalized.append({"type": "text", "text": text})
+            continue
+        if block.get("type") == "image":
+            src = block.get("source") or {}
+            data = src.get("data")
+            if not isinstance(data, str) or not data:
+                continue
+            media_type = src.get("media_type") or "image/png"
+            normalized.append(
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": media_type, "data": data},
+                }
+            )
+    if len(normalized) == 1 and normalized[0].get("type") == "text":
+        return normalized[0]["text"]
+    return normalized
+
+
 def _list_all_messages(client, conv: str, agent_id: str) -> list:
     """Return full conversation history (all pages, chronological)."""
     if conv == DEFAULT_CONVERSATION_ID:
@@ -38,6 +68,7 @@ def send_message(
 ):
     settings = get_settings()
     payload = body.model_dump(mode="json")
+    payload["content"] = _normalize_input_content(payload["content"])
     body_size = len(json.dumps(payload).encode("utf-8"))
     if body_size > settings.vision_max_request_bytes:
         raise HTTPException(

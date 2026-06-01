@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
 from backend.config import get_letta_client
+from backend.context_refresh import recompile_conversation
 from backend.letta_lists import collect_sync_page
 from backend.schemas import (
     ConversationSummary,
@@ -136,6 +137,17 @@ def update_conversation(conversation_id: str, body: UpdateConversationRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
     return _to_summary(client, conv)
+
+
+@router.post("/agents/{agent_id}/conversations/{conversation_id}/recompile-context")
+def recompile_conversation_context(agent_id: str, conversation_id: str):
+    """Recompile this conversation's system message (directories, file cores, blocks)."""
+    client = get_letta_client()
+    try:
+        content = recompile_conversation(client, conversation_id, agent_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail={"error": str(e)}) from e
+    return {"content": content}
 
 
 @router.delete("/conversations/{conversation_id}")

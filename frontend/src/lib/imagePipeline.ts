@@ -6,7 +6,7 @@ export type ImageBlock = {
 };
 
 const LS_PREFIX = "letta-vision-client/";
-const DEFAULT_MAX_EDGE = 1920;
+const DEFAULT_MAX_EDGE = 1024;
 const DEFAULT_JPEG_QUALITY = 0.85;
 const DEFAULT_MAX_UPLOAD = 20 * 1024 * 1024;
 
