@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-01
+
+### Added
+
+- File memory API bridge (`backend/routes/file_memory.py`) and UI: open files panel, system context modal.
+- Chat stream recovery (`chatStreamRecovery.js`): stall watchdog, keepalive SSE, post-stream history sync.
+- Providers tab (`Providers.svelte`) with server `/v1/providers` proxy.
+- Text file creation from Files UI (`CreateTextFileRequest`, folder text-files endpoint).
+- `FileViewerModal` for in-browser file preview.
+- Agent system prompt editor with save + bulk conversation recompile (`context_refresh.py`).
+- Master-detail tool selector and Agents subtabs for memory/tools organization.
+
+### Changed
+
+- SSE keepalive forwarding for Letta `ping` chunks; coalescing tests extended.
+- Tool-result image rendering prioritizes inline base64; reasoning content display improved.
+
+### Fixed
+
+- Chat freeze on abrupt SSE disconnect; cancel and refresh controls on error banner.
+- Tab-hidden and network-offline recovery while streaming.
+
 ## [0.4.0] - 2026-05-21
 
 ### Added
@@ -67,7 +89,8 @@ Pre-vision baseline: text chat bridge; smoke script for multimodal API only.
 - Docker image and standalone `docker-compose.yml`.
 - Stress-test scripts for empirical limit discovery.
 
-[Unreleased]: https://github.com/damonreed/letta-vision-client/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/damonreed/letta-vision-client/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.5.0
 [0.4.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.4.0
 [0.3.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.3.0
 [0.2.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.2.0
