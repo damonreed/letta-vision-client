@@ -211,6 +211,8 @@ export const api = {
 
   listImages: (limit = 50) => request(`/images?limit=${limit}`),
   getImage: (id) => request(`/images/${id}`),
+  updateImage: (id, body) =>
+    request(`/images/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteImage: (id) => request(`/images/${id}`, { method: "DELETE" }),
   reEnrichImage: (id) => request(`/images/${id}/re-enrich`, { method: "POST" }),
   getImageUrl: (id) => request(`/images/${id}/url`),

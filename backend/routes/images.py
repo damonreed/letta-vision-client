@@ -25,6 +25,11 @@ def get_image(image_id: str):
     return _httpx_get(f"/v1/images/{image_id}")
 
 
+@router.patch("/{image_id}")
+def update_image(image_id: str, body: dict):
+    return _httpx_request("PATCH", f"/v1/images/{image_id}", json=body)
+
+
 @router.delete("/{image_id}")
 def delete_image(image_id: str):
     return _httpx_request("DELETE", f"/v1/images/{image_id}")
