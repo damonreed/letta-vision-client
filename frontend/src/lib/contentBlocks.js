@@ -21,9 +21,20 @@ export function lettaFileIdFromSource(source) {
 }
 
 /** Same-origin proxy path for persisted Letta image refs (v0.6 object store). */
-export function imageContentPath(fileId) {
+export function imageContentPath(fileId, { variant = "full" } = {}) {
   if (!fileId) return null;
-  return `/api/images/${encodeURIComponent(fileId)}/content`;
+  const base = `/api/images/${encodeURIComponent(fileId)}/content`;
+  if (variant && variant !== "full") {
+    return `${base}?variant=${encodeURIComponent(variant)}`;
+  }
+  return base;
+}
+
+/** Grid thumbnail: prefer 1MP derivative when enrichment has produced one. */
+export function imageThumbnailPath(image) {
+  if (!image?.id) return null;
+  const variant = image.object_url_1mp ? "1mp" : "full";
+  return imageContentPath(image.id, { variant });
 }
 
 export function imageSrcFromBlock(block) {

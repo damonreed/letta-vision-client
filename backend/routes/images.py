@@ -41,11 +41,15 @@ def get_image_url(image_id: str):
 
 
 @router.get("/{image_id}/content")
-def get_image_content(image_id: str):
+def get_image_content(image_id: str, variant: str = "full"):
     settings = get_settings()
     timeout = httpx.Timeout(settings.letta_client_read_timeout_seconds, connect=10.0)
     with httpx.Client(timeout=timeout) as client:
-        res = client.get(_letta_url(f"/v1/images/{image_id}/content"), headers=_letta_headers())
+        res = client.get(
+            _letta_url(f"/v1/images/{image_id}/content"),
+            headers=_letta_headers(),
+            params={"variant": variant},
+        )
     if res.status_code >= 400:
         raise _http_error(res)
     media_type = res.headers.get("content-type", "application/octet-stream")
