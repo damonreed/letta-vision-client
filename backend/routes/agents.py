@@ -72,7 +72,6 @@ def create_agent(body: CreateAgentRequest):
     create_kwargs: dict = {
         "name": body.name,
         "model": body.model,
-        "embedding": body.embedding,
         "memory_blocks": memory_blocks,
         "tool_ids": body.tools if body.tools else None,
     }
@@ -95,8 +94,6 @@ def update_agent(agent_id: str, body: UpdateAgentRequest):
         kwargs["name"] = body.name
     if body.model is not None:
         kwargs["model"] = body.model
-    if body.embedding is not None:
-        kwargs["embedding"] = body.embedding
     if body.context_window_limit is not None:
         kwargs["context_window_limit"] = body.context_window_limit
     if body.per_file_view_window_char_limit is not None:

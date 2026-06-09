@@ -24,7 +24,6 @@
   let allTools = $state([]);
   let models = $state([]);
   let modelObjects = $state([]);
-  let embeddings = $state([]);
   let showCreate = $state(false);
   let error = $state("");
   let confirmDelete = $state(false);
@@ -46,8 +45,6 @@
   let editModel = $state("");
   let editingContextWindow = $state(false);
   let editContextWindow = $state("");
-  let editingEmbedding = $state(false);
-  let editEmbedding = $state("");
   let editingFilePreviewLimit = $state(false);
   let editFilePreviewLimit = $state("");
 
@@ -55,7 +52,6 @@
     name: "",
     model: "",
     context_window_limit: "",
-    embedding: "",
     per_file_view_window_char_limit: "",
     persona: "",
     human: "",
@@ -87,17 +83,15 @@
   async function loadAll() {
     error = "";
     try {
-      const [a, m, e, t] = await Promise.all([
+      const [a, m, t] = await Promise.all([
         api.listAgents(),
         api.listModels(),
-        api.listEmbeddings(),
         api.listTools(),
       ]);
       agents.set(a);
       modelObjects = Array.isArray(m) ? m : [];
       models = uniqueHandles(modelObjects);
       modelsCache.set(modelObjects);
-      embeddings = uniqueHandles(Array.isArray(e) ? e : []);
       allTools = t;
     } catch (err) {
       error = err.message;
@@ -159,7 +153,6 @@
     editingName = false;
     editingModel = false;
     editingContextWindow = false;
-    editingEmbedding = false;
     editingFilePreviewLimit = false;
     try {
       detail = await api.getAgent(id);
@@ -212,7 +205,6 @@
         name: "",
         model: initialModel,
         context_window_limit: initialCw ? String(initialCw) : "",
-        embedding: embeddings[0] || "",
         per_file_view_window_char_limit: "",
         persona: "",
         human: "",
@@ -236,7 +228,6 @@
       const created = await api.createAgent({
         name: form.name,
         model: form.model,
-        embedding: form.embedding,
         persona: form.persona,
         human: form.human,
         tools: form.tools,
@@ -332,16 +323,6 @@
     }
   }
 
-  async function saveEmbedding() {
-    try {
-      await api.updateAgent(selectedId, { embedding: editEmbedding });
-      editingEmbedding = false;
-      await loadDetail(selectedId);
-    } catch (err) {
-      error = err.message;
-    }
-  }
-
   async function saveFilePreviewLimit() {
     try {
       await api.updateAgent(selectedId, {
@@ -381,11 +362,6 @@
   function startEditContextWindow() {
     editContextWindow = String(agentContextWindow(detail) ?? "");
     editingContextWindow = true;
-  }
-
-  function startEditEmbedding() {
-    editEmbedding = detail.embedding || "";
-    editingEmbedding = true;
   }
 
   function startEditFilePreviewLimit() {
@@ -516,27 +492,6 @@
           {:else}
             <button class="linkish" onclick={startEditContextWindow}>
               {formatInt(agentContextWindow(detail))}
-            </button>
-          {/if}
-        </dd>
-        <dt>Embedding</dt>
-        <dd>
-          {#if editingEmbedding}
-            <div class="inline-edit stack">
-              <FilteredSelect
-                label=""
-                options={embeddings}
-                bind:value={editEmbedding}
-                oncancel={() => (editingEmbedding = false)}
-              />
-              <div class="btn-row">
-                <button onclick={saveEmbedding}>Save</button>
-                <button class="muted" onclick={() => (editingEmbedding = false)}>Cancel</button>
-              </div>
-            </div>
-          {:else}
-            <button class="linkish" onclick={startEditEmbedding}>
-              {detail.embedding || "—"}
             </button>
           {/if}
         </dd>
@@ -701,7 +656,6 @@
             </span>
           {/if}
         </label>
-        <FilteredSelect label="Embedding" options={embeddings} bind:value={form.embedding} />
         <label>
           File preview limit
           <input

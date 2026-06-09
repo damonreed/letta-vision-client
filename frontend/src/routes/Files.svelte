@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { api, modelHandle } from "../lib/api.js";
+  import { api } from "../lib/api.js";
   import FileViewerModal from "../lib/components/FileViewerModal.svelte";
   import {
     downloadTextContent,
@@ -12,7 +12,6 @@
     saveSelectedAgent,
     selectedAgentId,
   } from "../lib/stores.js";
-  import FilteredSelect from "../lib/FilteredSelect.svelte";
 
   let folderList = $state([]);
   let selectedFolderId = $state(null);
@@ -20,7 +19,6 @@
   let agentList = $state([]);
   let agentId = $state(null);
   let attachedFolderIds = $state(new Set());
-  let embeddings = $state([]);
   let error = $state("");
   let uploading = $state(false);
   let creatingText = $state(false);
@@ -35,7 +33,6 @@
   let createForm = $state({
     name: "",
     description: "",
-    embedding: "",
   });
 
   let textFileForm = $state({
@@ -64,17 +61,12 @@
   async function loadAll() {
     error = "";
     try {
-      const [folders, embeds, agentsRes] = await Promise.all([
+      const [folders, agentsRes] = await Promise.all([
         api.listFolders(),
-        api.listEmbeddings(),
         api.listAgents(),
       ]);
       folderList = folders;
-      embeddings = uniqueHandles(Array.isArray(embeds) ? embeds : []);
       agents.set(agentsRes);
-      if (!createForm.embedding && embeddings[0]) {
-        createForm.embedding = embeddings[0];
-      }
       if (selectedFolderId && !folderList.some((f) => f.id === selectedFolderId)) {
         selectedFolderId = null;
         files = [];
@@ -146,7 +138,6 @@
     createForm = {
       name: "",
       description: "",
-      embedding: embeddings[0] || "",
     };
     showCreateFolder = true;
   }
@@ -217,9 +208,13 @@
     if (!selectedFolderId) return;
     creatingText = true;
     error = "";
+    let fileName = textFileForm.file_name.trim();
+    if (fileName && !/\.\w+$/.test(fileName.split("/").pop() || "")) {
+      fileName = `${fileName}.txt`;
+    }
     try {
       await api.createTextFile(selectedFolderId, {
-        file_name: textFileForm.file_name.trim(),
+        file_name: fileName,
         content: textFileForm.content,
       });
       showCreateTextFile = false;
@@ -267,16 +262,6 @@
   function fileLabel(file) {
     return fileDisplayName(file);
   }
-
-  function embeddingLabel(folder) {
-    const handle = folder.embedding_config?.handle;
-    return handle || "—";
-  }
-
-  function uniqueHandles(items) {
-    const handles = items.map(modelHandle);
-    return [...new Set(handles)];
-  }
 </script>
 
 <div class="files-layout">
@@ -317,7 +302,6 @@
             {#if agentId && isAttached(folder.id)}
               <span class="badge attached">attached</span>
             {/if}
-            <span class="meta">{embeddingLabel(folder)}</span>
           </button>
         </li>
       {/each}
@@ -345,7 +329,6 @@
 
       <dl class="meta-grid">
         <dt>ID</dt><dd><code>{selectedFolder.id}</code></dd>
-        <dt>Embedding</dt><dd>{embeddingLabel(selectedFolder)}</dd>
         {#if selectedFolder.description}
           <dt>Description</dt><dd>{selectedFolder.description}</dd>
         {/if}
@@ -391,6 +374,11 @@
                     <span class="status" class:status-error={file.processing_status === "error"}>
                       {file.processing_status || "—"}
                     </span>
+                    {#if file.processing_status === "error" && file.error_message}
+                      <div class="status-detail" title={file.error_message}>
+                        {file.error_message}
+                      </div>
+                    {/if}
                   </td>
                   <td class="actions">
                     <button type="button" class="link-btn" onclick={() => openFileViewer(file)}>
@@ -457,11 +445,6 @@
       <div class="modal-body">
         <label>Name <input bind:value={createForm.name} /></label>
         <label>Description <textarea bind:value={createForm.description} rows="2"></textarea></label>
-        <FilteredSelect
-          label="Embedding"
-          options={embeddings}
-          bind:value={createForm.embedding}
-        />
       </div>
       <div class="modal-actions">
         <button onclick={createFolder} disabled={!createForm.name.trim()}>Create</button>
@@ -694,6 +677,15 @@
   }
   .status-error {
     color: #dc2626;
+  }
+  .status-detail {
+    margin-top: 0.2rem;
+    font-size: 0.7rem;
+    color: #b91c1c;
+    max-width: 280px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .muted {
     background: #f3f4f6;

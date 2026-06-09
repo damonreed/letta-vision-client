@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["folders"])
 
 
+def _normalize_text_file_name(file_name: str) -> str:
+    name = (file_name or "").strip()
+    if not name:
+        return name
+    base = os.path.basename(name)
+    if "." not in base:
+        return f"{base}.txt"
+    return base
+
+
 @router.get("/folders")
 def list_folders():
     client = get_letta_client()
@@ -35,7 +45,6 @@ def create_folder(body: CreateFolderRequest):
         folder = client.folders.create(
             name=body.name,
             description=body.description or None,
-            embedding=body.embedding,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
@@ -83,7 +92,7 @@ def get_folder_file(
 @router.post("/folders/{folder_id}/files/text")
 def create_text_file(folder_id: str, body: CreateTextFileRequest):
     client = get_letta_client()
-    file_name = (body.file_name or "").strip()
+    file_name = _normalize_text_file_name(body.file_name)
     if not file_name:
         raise HTTPException(status_code=400, detail={"error": "file_name is required"})
     content_bytes = body.content.encode("utf-8")

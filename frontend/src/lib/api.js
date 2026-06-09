@@ -2,14 +2,26 @@ const API = "/api";
 
 import { normalizeOutgoingForSend } from "./chatFailures.js";
 
+/** Parse FastAPI `{ detail: { error } }`, `{ detail: "..." }`, or `{ error }`. */
+export function parseApiError(body, statusText = "") {
+  if (!body || typeof body !== "object") return statusText || "Request failed";
+  if (typeof body.error === "string" && body.error) return body.error;
+  const detail = body.detail;
+  if (typeof detail === "string" && detail) return detail;
+  if (detail && typeof detail === "object" && typeof detail.error === "string") {
+    return detail.error;
+  }
+  return statusText || "Request failed";
+}
+
 async function request(path, options = {}) {
   const res = await fetch(`${API}${path}`, {
     headers: { "Content-Type": "application/json", ...options.headers },
     ...options,
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || res.statusText);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(parseApiError(err, res.statusText));
   }
   if (res.status === 204) return null;
   return res.json();
@@ -111,8 +123,8 @@ export const api = {
   async *streamMcpConnect(mcpServerId, { signal } = {}) {
     const res = await fetch(`${API}/mcp/servers/${mcpServerId}/connect`, { signal });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || res.statusText);
+      const err = await res.json().catch(() => ({}));
+      throw new Error(parseApiError(err, res.statusText));
     }
     const { parseMcpConnectStream } = await import("./mcpConnect.js");
     yield* parseMcpConnectStream(res);
@@ -169,8 +181,8 @@ export const api = {
       body: form,
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || res.statusText);
+      const err = await res.json().catch(() => ({}));
+      throw new Error(parseApiError(err, res.statusText));
     }
     return res.json();
   },
@@ -229,8 +241,8 @@ export const api = {
       signal,
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: res.statusText }));
-      throw new Error(err.error || res.statusText);
+      const err = await res.json().catch(() => ({}));
+      throw new Error(parseApiError(err, res.statusText));
     }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();

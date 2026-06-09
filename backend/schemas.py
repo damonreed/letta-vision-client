@@ -13,7 +13,6 @@ class AgentSummary(BaseModel):
 class CreateAgentRequest(BaseModel):
     name: str
     model: str
-    embedding: str
     persona: str = ""
     human: str = ""
     tools: list[str] = Field(default_factory=list)
@@ -24,7 +23,6 @@ class CreateAgentRequest(BaseModel):
 class UpdateAgentRequest(BaseModel):
     name: str | None = None
     model: str | None = None
-    embedding: str | None = None
     context_window_limit: int | None = None
     per_file_view_window_char_limit: int | None = None
     system: str | None = None
@@ -115,7 +113,6 @@ class ConversationSummary(BaseModel):
 class CreateFolderRequest(BaseModel):
     name: str
     description: str = ""
-    embedding: str
 
 
 class CreateTextFileRequest(BaseModel):
