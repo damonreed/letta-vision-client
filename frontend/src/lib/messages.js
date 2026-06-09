@@ -25,13 +25,22 @@ export function compareMessagesChronological(a, b) {
   const rankDiff = roleRank(a) - roleRank(b);
   if (rankDiff !== 0) return rankDiff;
 
+  const sa = a.seq_id ?? null;
+  const sb = b.seq_id ?? null;
+  if (sa != null && sb != null) {
+    if (sa !== sb) return sa - sb;
+    const subA = a.seq_sub ?? 0;
+    const subB = b.seq_sub ?? 0;
+    if (subA !== subB) return subA - subB;
+  }
+
   const da = a.date ? Date.parse(a.date) : NaN;
   const db = b.date ? Date.parse(b.date) : NaN;
   if (!Number.isNaN(da) && !Number.isNaN(db) && da !== db) return da - db;
 
-  const sa = a.seq_id ?? 0;
-  const sb = b.seq_id ?? 0;
-  if (sa !== sb) return sa - sb;
+  const fallbackA = a.seq_id ?? 0;
+  const fallbackB = b.seq_id ?? 0;
+  if (fallbackA !== fallbackB) return fallbackA - fallbackB;
 
   return String(a.id).localeCompare(String(b.id));
 }

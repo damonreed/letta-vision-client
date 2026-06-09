@@ -548,7 +548,8 @@
           ? m.upstream_error || m.detail || null
           : null,
       date: m.date,
-      seq_id: m.seq_id ?? null,
+      seq_id: m.seq_id ?? m.sequence_id ?? null,
+      seq_sub: m.seq_sub ?? null,
       collapsed: ["tool_call", "tool_result", "reasoning"].includes(role),
       systemSummary: role === "system" ? systemSummary(content) : null,
     };
