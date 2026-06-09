@@ -40,8 +40,9 @@ function imageDataUrlFromToolBlock(block) {
 
 /** Prefer multimodal blocks from tool_returns; never merge duplicate top-level copies. */
 export function getToolResultBlocks(rawMessage) {
-  const tr0 = rawMessage?.tool_returns?.[0]?.tool_return;
-  if (Array.isArray(tr0)) return dedupeContentBlocks(tr0);
+  const tr0 = rawMessage?.tool_returns?.[0];
+  if (Array.isArray(tr0?.tool_return)) return dedupeContentBlocks(tr0.tool_return);
+  if (Array.isArray(tr0?.func_response)) return dedupeContentBlocks(tr0.func_response);
   if (Array.isArray(rawMessage?.tool_return)) return dedupeContentBlocks(rawMessage.tool_return);
   return null;
 }
