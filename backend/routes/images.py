@@ -2,9 +2,10 @@ import base64
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 
 from backend.config import get_settings
-from backend.routes.providers import _httpx_get, _httpx_request
+from backend.routes.providers import _httpx_get, _httpx_request, _http_error, _letta_headers, _letta_url
 from backend.schemas import FetchImageUrlRequest, FetchImageUrlResponse
 from backend.url_fetch import fetch_image_bytes
 
@@ -37,6 +38,18 @@ def re_enrich_image(image_id: str):
 @router.get("/{image_id}/url")
 def get_image_url(image_id: str):
     return _httpx_get(f"/v1/images/{image_id}/url")
+
+
+@router.get("/{image_id}/content")
+def get_image_content(image_id: str):
+    settings = get_settings()
+    timeout = httpx.Timeout(settings.letta_client_read_timeout_seconds, connect=10.0)
+    with httpx.Client(timeout=timeout) as client:
+        res = client.get(_letta_url(f"/v1/images/{image_id}/content"), headers=_letta_headers())
+    if res.status_code >= 400:
+        raise _http_error(res)
+    media_type = res.headers.get("content-type", "application/octet-stream")
+    return Response(content=res.content, media_type=media_type)
 
 DEFAULT_MAX_IMAGE_FETCH_BYTES = 20 * 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 60.0
