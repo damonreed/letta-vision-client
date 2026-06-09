@@ -209,6 +209,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  listImages: (limit = 50) => request(`/images?limit=${limit}`),
+  getImage: (id) => request(`/images/${id}`),
+  deleteImage: (id) => request(`/images/${id}`, { method: "DELETE" }),
+  reEnrichImage: (id) => request(`/images/${id}/re-enrich`, { method: "POST" }),
+  getImageUrl: (id) => request(`/images/${id}/url`),
+
   async *streamMessage(agentId, content, conversationId = null, { signal } = {}) {
     const payloadContent = normalizeOutgoingForSend(content) ?? content;
     const params = conversationId

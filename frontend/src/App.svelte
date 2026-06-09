@@ -3,6 +3,7 @@
   import Agents from "./routes/Agents.svelte";
   import Chat from "./routes/Chat.svelte";
   import Files from "./routes/Files.svelte";
+  import Images from "./routes/Images.svelte";
   import Mcp from "./routes/Mcp.svelte";
   import Providers from "./routes/Providers.svelte";
   import { currentTab, initFromHash, setTab } from "./lib/stores.js";
@@ -41,6 +42,9 @@
       <button class:active={tab === "files"} onclick={() => navigate("files")}>
         Files
       </button>
+      <button class:active={tab === "images"} onclick={() => navigate("images")}>
+        Images
+      </button>
       <button class:active={tab === "mcp"} onclick={() => navigate("mcp")}>
         MCP
       </button>
@@ -58,6 +62,9 @@
     </div>
     <div class="tab-panel" class:hidden={tab !== "files"}>
       <Files />
+    </div>
+    <div class="tab-panel" class:hidden={tab !== "images"}>
+      <Images />
     </div>
     <div class="tab-panel" class:hidden={tab !== "mcp"}>
       <Mcp />
