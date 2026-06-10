@@ -45,6 +45,9 @@
   import AttachmentThumbnail from "../lib/components/AttachmentThumbnail.svelte";
   import ImageViewer from "../lib/components/ImageViewer.svelte";
   import {
+    extractToolName,
+    formatStructuredToolReturnText,
+    formatToolCallContent,
     getToolResultBlocks,
     getToolResultDisplayImages,
     getToolResultText,
@@ -487,11 +490,18 @@
         content = parseContent(blocks).text;
       } else {
         content = getToolResultText(m);
-        if (!content && m.tool_return != null) {
-          content =
-            typeof m.tool_return === "string"
-              ? m.tool_return
-              : JSON.stringify(m.tool_return, null, 2);
+        if (!content) {
+          const structured =
+            m.tool_return ?? m.tool_returns?.[0]?.tool_return ?? null;
+          if (structured != null) {
+            if (typeof structured === "string") {
+              content = structured;
+            } else {
+              content =
+                formatStructuredToolReturnText(structured) ||
+                JSON.stringify(structured, null, 2);
+            }
+          }
         }
       }
     } else if (failureNotice) {
@@ -511,8 +521,10 @@
         content = JSON.stringify(m.content, null, 2);
       }
     } else if (m.tool_call) {
-      content = JSON.stringify(m.tool_call, null, 2);
+      content = formatToolCallContent(m.tool_call);
     }
+
+    const toolName = extractToolName(m);
 
     if (
       type === "assistant_message" &&
@@ -539,6 +551,7 @@
       content,
       contentBlocks,
       toolDisplayImages,
+      toolName,
       injectedContextJson: injectedJson,
       errorDetail:
         type === "error_message"
@@ -1175,7 +1188,13 @@
         </div>
       {/if}
       <details open={msg.role === "tool_result" ? false : !msg.collapsed}>
-        <summary>{msg.role === "tool_call" ? "Tool call" : "Tool result"}</summary>
+        <summary>
+          {#if msg.toolName}
+            {msg.role === "tool_call" ? "Tool call" : "Tool result"} · {msg.toolName}
+          {:else}
+            {msg.role === "tool_call" ? "Tool call" : "Tool result"}
+          {/if}
+        </summary>
         {#if msg.contentBlocks?.length}
           <div class="content blocks">
             {#if msg.content}

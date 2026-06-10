@@ -4,7 +4,82 @@
  * persisted Letta refs resolved via /api/images/{id}/content.
  */
 
-import { imageSrcFromBlock } from "./contentBlocks.js";
+import { imageContentPath, imageSrcFromBlock } from "./contentBlocks.js";
+
+function normalizeImageHandle(handle) {
+  if (!handle || typeof handle !== "string") return null;
+  const cleaned = handle.trim();
+  if (!cleaned) return null;
+  return cleaned.startsWith("image-") ? cleaned : `image-${cleaned}`;
+}
+
+/** Tool name from tool_call payload, message name, or tool_call_id (functions.name:N). */
+export function extractToolName(rawMessage) {
+  const tc = rawMessage?.tool_call;
+  if (tc?.name) return tc.name;
+  if (rawMessage?.name) return rawMessage.name;
+  const tcid =
+    rawMessage?.tool_call_id ||
+    rawMessage?.tool_returns?.[0]?.tool_call_id ||
+    tc?.tool_call_id;
+  if (typeof tcid === "string") {
+    const match = tcid.match(/functions\.([^:]+):/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/** Compact tool-call body for the details panel (not raw JSON wrapper). */
+export function formatToolCallContent(toolCall) {
+  if (!toolCall || typeof toolCall !== "object") return "";
+  const name = toolCall.name || "unknown";
+  let args = toolCall.arguments;
+  if (typeof args === "string") {
+    try {
+      args = JSON.stringify(JSON.parse(args), null, 2);
+    } catch {
+      /* keep raw string */
+    }
+  } else if (args != null) {
+    args = JSON.stringify(args, null, 2);
+  }
+  return args ? `${name}\n${args}` : name;
+}
+
+function handlesFromStructuredToolReturn(toolReturn) {
+  if (!toolReturn || typeof toolReturn !== "object" || Array.isArray(toolReturn)) {
+    return [];
+  }
+  const rows = toolReturn.results || toolReturn.hits;
+  if (!Array.isArray(rows)) return [];
+  const out = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const id = normalizeImageHandle(row.handle || row.file_id || row.id);
+    if (id) out.push(id);
+  }
+  return out;
+}
+
+/** Human-readable text for dict tool returns (e.g. image_search hits). */
+export function formatStructuredToolReturnText(toolReturn) {
+  if (!toolReturn || typeof toolReturn !== "object" || Array.isArray(toolReturn)) {
+    return null;
+  }
+  const rows = toolReturn.results || toolReturn.hits;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return rows
+    .map((row, index) => {
+      const handle = row?.handle || row?.file_id || row?.id || "?";
+      const score =
+        row?.score != null && Number.isFinite(Number(row.score))
+          ? ` score=${Number(row.score).toFixed(3)}`
+          : "";
+      const desc = row?.description || row?.caption || "";
+      return `${index + 1}. ${handle}${score}${desc ? ` — ${desc}` : ""}`;
+    })
+    .join("\n");
+}
 
 function blockDedupeKey(block) {
   if (!block || typeof block !== "object") return "";
@@ -59,7 +134,15 @@ export function getToolResultText(rawMessage) {
   return "";
 }
 
+function fileIdFromDisplaySrc(src) {
+  if (!src || typeof src !== "string") return null;
+  const match = src.match(/^\/api\/images\/([^/?#]+)\/content/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 function imageDisplayFingerprint(src) {
+  const fileId = fileIdFromDisplaySrc(src);
+  if (fileId) return `letta:${fileId}`;
   if (!src?.startsWith("data:")) return src || "";
   const comma = src.indexOf(",");
   const payload = comma >= 0 ? src.slice(comma + 1) : src;
@@ -88,16 +171,30 @@ export function getToolResultDisplayImages(rawMessage) {
   const out = [];
   const seen = new Set();
   const blocks = getToolResultBlocks(rawMessage);
-  if (!blocks) return out;
 
-  for (const block of blocks) {
-    if (block?.type !== "image") continue;
-    const src = imageDisplaySrcFromToolBlock(block);
-    if (!src) continue;
-    const fp = imageDisplayFingerprint(src);
-    if (seen.has(fp)) continue;
-    seen.add(fp);
-    out.push({ key: `block-${out.length}`, src });
+  if (blocks) {
+    for (const block of blocks) {
+      if (block?.type !== "image") continue;
+      const src = imageDisplaySrcFromToolBlock(block);
+      if (!src) continue;
+      const fp = imageDisplayFingerprint(src);
+      if (seen.has(fp)) continue;
+      seen.add(fp);
+      out.push({ key: `block-${out.length}`, src });
+    }
+  }
+
+  const structured =
+    rawMessage?.tool_return ??
+    rawMessage?.tool_returns?.[0]?.tool_return ??
+    null;
+  if (structured && typeof structured === "object" && !Array.isArray(structured)) {
+    for (const handle of handlesFromStructuredToolReturn(structured)) {
+      const src = imageContentPath(handle);
+      if (!src || seen.has(src)) continue;
+      seen.add(src);
+      out.push({ key: `hit-${handle}`, src });
+    }
   }
 
   return out;
