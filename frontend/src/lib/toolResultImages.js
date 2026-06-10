@@ -1,9 +1,10 @@
 /**
- * Tool-result images for MCP tools (ZapImage, etc.).
- * Display policy: if the model sees inline image bytes, the user sees them too —
- * no signed-URL fetch or URL-based previews in chat history.
+ * Tool-result images for MCP tools (ZapImage, fetch_image, etc.).
+ * Display policy: show the same pixels the model can access — inline base64 or
+ * persisted Letta refs resolved via /api/images/{id}/content.
  */
 
+import { imageSrcFromBlock } from "./contentBlocks.js";
 
 function blockDedupeKey(block) {
   if (!block || typeof block !== "object") return "";
@@ -31,11 +32,9 @@ function dedupeContentBlocks(blocks) {
   return out;
 }
 
-/** Inline base64 only — URLs are not shown in chat history. */
-function imageDataUrlFromToolBlock(block) {
-  const src = block?.source;
-  if (!src?.data || !src?.media_type) return null;
-  return `data:${src.media_type};base64,${src.data}`;
+/** Inline base64 or same-origin Letta ref content URL. */
+function imageDisplaySrcFromToolBlock(block) {
+  return imageSrcFromBlock(block);
 }
 
 /** Prefer multimodal blocks from tool_returns; never merge duplicate top-level copies. */
@@ -93,7 +92,7 @@ export function getToolResultDisplayImages(rawMessage) {
 
   for (const block of blocks) {
     if (block?.type !== "image") continue;
-    const src = imageDataUrlFromToolBlock(block);
+    const src = imageDisplaySrcFromToolBlock(block);
     if (!src) continue;
     const fp = imageDisplayFingerprint(src);
     if (seen.has(fp)) continue;

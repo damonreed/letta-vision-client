@@ -52,6 +52,7 @@
     getToolResultText,
     redactToolResultDisplayText,
   } from "../lib/toolResultImages.js";
+  import { copyTextToClipboard } from "../lib/clipboard.js";
   import ConversationList from "../lib/ConversationList.svelte";
   import SystemContextModal from "../lib/SystemContextModal.svelte";
   import {
@@ -169,14 +170,12 @@
 
   async function copyConversationId() {
     if (!conversationId) return;
-    try {
-      await navigator.clipboard.writeText(conversationId);
+    const ok = await copyTextToClipboard(conversationId);
+    if (ok) {
       convIdCopied = true;
       setTimeout(() => {
         convIdCopied = false;
       }, 1500);
-    } catch {
-      /* clipboard unavailable */
     }
   }
 
