@@ -89,7 +89,7 @@
 
 <section class="images-tab">
   <header>
-    <h2>Images</h2>
+    <h2>Images{#if images.length} <span class="count">({images.length})</span>{/if}</h2>
     <button type="button" onclick={loadImages} disabled={loading}>Refresh</button>
   </header>
   {#if error}<p class="error">{error}</p>{/if}
@@ -179,6 +179,11 @@
     align-items: center;
     gap: 1rem;
     margin-bottom: 1rem;
+  }
+  .count {
+    font-size: 0.85em;
+    font-weight: 400;
+    color: #666;
   }
   .grid {
     display: grid;

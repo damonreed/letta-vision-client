@@ -13,11 +13,14 @@ router = APIRouter(prefix="/api/images", tags=["images"])
 
 
 @router.get("")
-def list_images(limit: int = 50, enrichment_status: str | None = None):
-    params = f"?limit={limit}"
+def list_images(limit: int | None = None, enrichment_status: str | None = None):
+    query: list[str] = []
+    if limit is not None:
+        query.append(f"limit={limit}")
     if enrichment_status:
-        params += f"&enrichment_status={enrichment_status}"
-    return _httpx_get(f"/v1/images{params}")
+        query.append(f"enrichment_status={enrichment_status}")
+    suffix = f"?{'&'.join(query)}" if query else ""
+    return _httpx_get(f"/v1/images{suffix}")
 
 
 @router.get("/{image_id}")

@@ -221,7 +221,12 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  listImages: (limit = 50) => request(`/images?limit=${limit}`),
+  listImages: (limit) => {
+    const params = new URLSearchParams();
+    if (limit != null) params.set("limit", String(limit));
+    const q = params.toString();
+    return request(q ? `/images?${q}` : "/images");
+  },
   getImage: (id) => request(`/images/${id}`),
   updateImage: (id, body) =>
     request(`/images/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
