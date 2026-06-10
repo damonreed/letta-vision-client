@@ -19,8 +19,8 @@ FILE_TOOL_NAMES = {
     "file_grep",
     "update_file_headline",
     "write_file_archive",
-    "search_file_archives",
-    "search_file_contents",
+    "file_archives_search",
+    "file_contents_search",
 }
 
 

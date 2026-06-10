@@ -2,12 +2,40 @@
 export const DEFAULT_TOOL_NAMES = [
   "send_message",
   "memory",
-  "search_memory",
-  "store_memories",
+  "search_all",
+  "image_fetch",
+  "image_search",
   "conversation_search",
+  "archival_memory_insert",
+  "archival_memory_search",
+  "file_archives_search",
+  "file_contents_search",
   "web_search",
   "fetch_webpage",
   "run_code",
+];
+
+/**
+ * Still registered on the server for legacy/voice agents; omitted from grouped UI.
+ * If attached, they appear under "Other".
+ */
+export const LEGACY_MEMORY_TOOL_NAMES = [
+  "memory_insert",
+  "memory_replace",
+  "memory_rethink",
+  "memory_apply_patch",
+  "core_memory_append",
+  "core_memory_replace",
+  "memory_finish_edits",
+  "rethink_user_memory",
+  "finish_rethinking_memory",
+  "search_memory",
+  "store_memories",
+  "recall",
+  "fetch_image",
+  "search_file_archives",
+  "search_file_contents",
+  "search_archives",
 ];
 
 /** Grouped tool catalog (v0.3). Unknown tools fall into "Other". */
@@ -25,25 +53,12 @@ export const TOOL_GROUPS = [
   {
     id: "memory",
     label: "Memory",
-    tools: [
-      "memory",
-      "memory_insert",
-      "memory_replace",
-      "memory_rethink",
-      "memory_apply_patch",
-      "rethink_user_memory",
-      "core_memory_append",
-      "core_memory_replace",
-      "archival_memory_insert",
-      "archival_memory_search",
-      "finish_rethinking_memory",
-      "memory_finish_edits",
-    ],
+    tools: ["memory", "archival_memory_insert", "archival_memory_search"],
   },
   {
-    id: "memory-search",
-    label: "Memory search & storage",
-    tools: ["search_memory", "store_memories", "conversation_search"],
+    id: "conversations",
+    label: "Conversations",
+    tools: ["conversation_search", "search_all", "image_fetch", "image_search"],
   },
   {
     id: "file-access",
@@ -51,9 +66,9 @@ export const TOOL_GROUPS = [
     tools: [
       "add_text_file",
       "write_file_archive",
-      "search_file_archives",
+      "file_archives_search",
       "update_file_headline",
-      "search_file_contents",
+      "file_contents_search",
       "open_file",
       "close_file",
       "file_read_page",
