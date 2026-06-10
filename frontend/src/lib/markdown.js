@@ -1,3 +1,6 @@
+import DOMPurify from "dompurify";
+import { marked } from "marked";
+
 /** HTML tags; do not treat as Letta pseudo-XML blocks. */
 const HTML_TAGS = new Set([
   "a",
@@ -180,4 +183,36 @@ export function splitAgentContent(text) {
     });
   }
   return segments.filter((seg) => seg.type === "literal" || seg.text.trim());
+}
+
+/**
+ * Models often indent the opening *stage direction* with 1–8 spaces. Markdown
+ * treats 4+ spaces as a code block, which breaks italic action lines.
+ */
+export function normalizeAgentMarkdown(text) {
+  if (!text) return "";
+  let inFence = false;
+  return text
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("```")) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      return line.replace(/^[ \t]{1,8}(?=\S)/, "");
+    })
+    .join("\n");
+}
+
+/** Render agent prose markdown for {@html} injection. */
+export function renderAgentMarkdown(text) {
+  const normalized = normalizeAgentMarkdown(text);
+  try {
+    const html = marked.parse(normalized);
+    return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+  } catch {
+    return DOMPurify.sanitize(normalized);
+  }
 }

@@ -1,10 +1,8 @@
 <script>
   import { onDestroy, onMount, tick } from "svelte";
-  import DOMPurify from "dompurify";
-  import { marked } from "marked";
   import { api } from "../lib/api.js";
   import { messageListKey, sortMessagesChronological, withUniqueMessageIds } from "../lib/messages.js";
-  import { splitAgentContent } from "../lib/markdown.js";
+  import { renderAgentMarkdown, splitAgentContent } from "../lib/markdown.js";
   import { buildDisplayGroups } from "../lib/chatDisplay.js";
   import {
     enrichStreamFailureRow,
@@ -968,14 +966,6 @@
     }
   }
 
-  function renderMarkdown(text) {
-    try {
-      const html = marked.parse(text || "");
-      return DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
-    } catch {
-      return DOMPurify.sanitize(text || "");
-    }
-  }
 </script>
 
 <div class="chat-layout">
@@ -1210,7 +1200,7 @@
           {#if part.type === "literal"}
             <pre class="letta-xml-block">{part.text}</pre>
           {:else if part.text.trim()}
-            <div class="md-part">{@html renderMarkdown(part.text)}</div>
+            <div class="md-part">{@html renderAgentMarkdown(part.text)}</div>
           {/if}
         {/each}
       </div>
