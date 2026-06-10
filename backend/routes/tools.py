@@ -7,7 +7,14 @@ from backend.schemas import AttachToolRequest, serialize
 
 router = APIRouter(prefix="/api", tags=["tools"])
 
-FILE_TOOL_NAMES = {
+REQUIRED_BASE_TOOL_NAMES = {
+    "send_message",
+    "search_all",
+    "image_fetch",
+    "image_search",
+    "conversation_search",
+    "archival_memory_insert",
+    "archival_memory_search",
     "attach_folder",
     "detach_folder",
     "open_file",
@@ -28,7 +35,7 @@ def _sync_base_tools_if_needed() -> None:
     client = get_letta_client()
     tools = collect_sync_page(client.tools.list())
     names = {t.name for t in tools}
-    if FILE_TOOL_NAMES.issubset(names):
+    if REQUIRED_BASE_TOOL_NAMES.issubset(names):
         return
     settings = get_settings()
     url = f"{settings.letta_base_url.rstrip('/')}/v1/tools/add-base-tools"
