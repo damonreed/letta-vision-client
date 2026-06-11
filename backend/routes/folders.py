@@ -2,10 +2,14 @@ import logging
 import os
 from typing import Literal
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 
 from backend.config import get_letta_client, get_settings
-from backend.context_refresh import recompile_agent_conversations, recompile_conversations_for_folder
+from backend.context_refresh import (
+    recompile_agent_conversations,
+    recompile_conversations_for_folder,
+    recompile_conversations_for_folder_background,
+)
 from backend.errors import http_error_from_exception
 from backend.letta_lists import collect_sync_page
 from backend.schemas import CreateFolderRequest, CreateTextFileRequest, serialize
@@ -166,18 +170,14 @@ async def upload_folder_file(
 
 
 @router.delete("/folders/{folder_id}/files/{file_id}")
-def delete_folder_file(folder_id: str, file_id: str):
+def delete_folder_file(folder_id: str, file_id: str, background_tasks: BackgroundTasks):
     client = get_letta_client()
     try:
         client.folders.files.delete(file_id, folder_id=folder_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
-    try:
-        stats = recompile_conversations_for_folder(folder_id)
-        return {"ok": True, "context_refresh": stats}
-    except Exception as exc:
-        logger.warning("Delete ok but context recompile failed for folder %s: %s", folder_id, exc)
-        return {"ok": True, "context_refresh": {"error": str(exc)}}
+    background_tasks.add_task(recompile_conversations_for_folder_background, folder_id)
+    return {"ok": True}
 
 
 @router.get("/agents/{agent_id}/folders")

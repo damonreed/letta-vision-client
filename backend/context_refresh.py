@@ -53,3 +53,12 @@ def recompile_conversations_for_folder(folder_id: str) -> dict[str, int]:
     for agent_id in agent_ids:
         recompiled += recompile_agent_conversations(client, agent_id)
     return {"agents": len(agent_ids), "recompiled": recompiled}
+
+
+def recompile_conversations_for_folder_background(folder_id: str) -> None:
+    """Best-effort folder context refresh after file mutations (non-blocking)."""
+    try:
+        stats = recompile_conversations_for_folder(folder_id)
+        logger.info("Background context refresh for folder %s: %s", folder_id, stats)
+    except Exception as exc:
+        logger.warning("Background context refresh failed for folder %s: %s", folder_id, exc)

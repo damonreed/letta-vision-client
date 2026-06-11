@@ -28,7 +28,10 @@
   let viewerFile = $state(null);
   let confirmDeleteFolder = $state(false);
   let confirmDeleteFileId = $state(null);
+  let deletingFileId = $state(null);
+  let deletingFolder = $state(false);
   let downloadingFileId = $state(null);
+  let successMessage = $state("");
 
   let createForm = $state({
     name: "",
@@ -92,6 +95,7 @@
     confirmDeleteFolder = false;
     confirmDeleteFileId = null;
     error = "";
+    successMessage = "";
     try {
       files = await api.listFolderFiles(id);
     } catch (err) {
@@ -155,16 +159,26 @@
   }
 
   async function deleteFolder() {
-    if (!selectedFolderId) return;
+    if (!selectedFolderId || deletingFolder) return;
+    deletingFolder = true;
     error = "";
+    successMessage = "";
+    const folderId = selectedFolderId;
     try {
-      await api.deleteFolder(selectedFolderId);
+      await api.deleteFolder(folderId);
+      if (viewerFile) {
+        showFileViewer = false;
+        viewerFile = null;
+      }
       selectedFolderId = null;
       files = [];
       confirmDeleteFolder = false;
+      successMessage = "Folder deleted.";
       await loadAll();
     } catch (err) {
       error = err.message;
+    } finally {
+      deletingFolder = false;
     }
   }
 
@@ -188,14 +202,26 @@
   }
 
   async function deleteFile(fileId) {
-    if (!selectedFolderId) return;
+    if (!selectedFolderId || deletingFileId) return;
+    deletingFileId = fileId;
     error = "";
+    successMessage = "";
+    confirmDeleteFileId = null;
+    const previousFiles = files;
+    files = files.filter((f) => f.id !== fileId);
+    if (viewerFile?.id === fileId) {
+      showFileViewer = false;
+      viewerFile = null;
+    }
     try {
       await api.deleteFolderFile(selectedFolderId, fileId);
-      confirmDeleteFileId = null;
       files = await api.listFolderFiles(selectedFolderId);
+      successMessage = "File deleted.";
     } catch (err) {
+      files = previousFiles;
       error = err.message;
+    } finally {
+      deletingFileId = null;
     }
   }
 
@@ -290,6 +316,7 @@
     </div>
 
     {#if error}<p class="error">{error}</p>{/if}
+    {#if successMessage}<p class="success">{successMessage}</p>{/if}
 
     <ul>
       {#each folderList as folder}
@@ -335,6 +362,8 @@
       </dl>
 
       <div class="files-section">
+        {#if error}<p class="error">{error}</p>{/if}
+        {#if successMessage}<p class="success">{successMessage}</p>{/if}
         <div class="files-header">
           <h3>Files</h3>
           <div class="files-toolbar">
@@ -392,16 +421,27 @@
                     >
                       {downloadingFileId === file.id ? "…" : "Download"}
                     </button>
-                    {#if confirmDeleteFileId === file.id}
-                      <button class="danger-btn" onclick={() => deleteFile(file.id)}>
+                    {#if deletingFileId === file.id}
+                      <span class="pending">Deleting…</span>
+                    {:else if confirmDeleteFileId === file.id}
+                      <button
+                        class="danger-btn"
+                        disabled={!!deletingFileId}
+                        onclick={() => deleteFile(file.id)}
+                      >
                         Confirm
                       </button>
-                      <button class="muted" onclick={() => (confirmDeleteFileId = null)}>
+                      <button
+                        class="muted"
+                        disabled={!!deletingFileId}
+                        onclick={() => (confirmDeleteFileId = null)}
+                      >
                         Cancel
                       </button>
                     {:else}
                       <button
                         class="danger-btn subtle"
+                        disabled={!!deletingFileId}
                         onclick={() => (confirmDeleteFileId = file.id)}
                       >
                         Delete
@@ -416,7 +456,9 @@
       </div>
 
       <div class="danger">
-        {#if confirmDeleteFolder}
+        {#if deletingFolder}
+          <p class="pending">Deleting folder…</p>
+        {:else if confirmDeleteFolder}
           <p>Delete folder <strong>{selectedFolder.name}</strong> and all its files?</p>
           <button class="danger-btn" onclick={deleteFolder}>Confirm delete folder</button>
           <button onclick={() => (confirmDeleteFolder = false)}>Cancel</button>
@@ -722,6 +764,17 @@
     padding: 0.5rem 1rem;
     margin: 0;
     font-size: 0.85rem;
+  }
+  .success {
+    color: #166534;
+    padding: 0.5rem 1rem;
+    margin: 0;
+    font-size: 0.85rem;
+  }
+  .pending {
+    font-size: 0.8rem;
+    color: #666;
+    font-style: italic;
   }
   .modal-backdrop {
     position: fixed;
