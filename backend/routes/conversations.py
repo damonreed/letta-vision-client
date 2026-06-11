@@ -66,10 +66,7 @@ def list_conversations(agent_id: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
 
-    summaries = [_default_summary(agent_id)]
-    for conv in items:
-        summaries.append(_to_summary(conv))
-    return summaries
+    return [_to_summary(conv) for conv in items]
 
 
 @router.post("/agents/{agent_id}/conversations")

@@ -3,7 +3,6 @@
   import {
     activeConversationId,
     conversations,
-    DEFAULT_CONVERSATION_ID,
     pickConversationForAgent,
     saveActiveConversation,
   } from "./stores.js";
@@ -109,7 +108,7 @@
       confirmDeleteId = null;
       await loadConversations(agentId);
       if (activeId === id) {
-        selectConversation(DEFAULT_CONVERSATION_ID);
+        selectConversation(pickConversationForAgent(agentId, convList));
       }
     } catch (err) {
       error = err.message;

@@ -78,12 +78,12 @@ export function saveActiveConversation(agentId, conversationId) {
   localStorage.removeItem(legacyActiveConversationKey(agentId));
 }
 
-/** Per-agent conversation: saved selection, else default. Validates against list when provided. */
+/** Per-agent conversation: saved selection, else most recent in list, else default (agent-direct). */
 export function pickConversationForAgent(agentId, convList) {
   const saved = loadActiveConversation(agentId);
   if (convList?.length) {
     if (saved && convList.some((c) => c.id === saved)) return saved;
-    return DEFAULT_CONVERSATION_ID;
+    return convList[0].id;
   }
   return saved || DEFAULT_CONVERSATION_ID;
 }
