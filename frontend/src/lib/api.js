@@ -231,7 +231,13 @@ export const api = {
     const params = new URLSearchParams();
     if (limit != null) params.set("limit", String(limit));
     if (enrichmentStatus) params.set("enrichment_status", enrichmentStatus);
-    if (afterCreatedAt) params.set("after_created_at", afterCreatedAt);
+    if (afterCreatedAt) {
+      const cursor = String(afterCreatedAt).replace(
+        /^(.+T\d{2}:\d{2}:\d{2}(?:\.\d+)?) (\d{2}:\d{2})$/,
+        "$1+$2",
+      );
+      params.set("after_created_at", cursor);
+    }
     if (afterId) params.set("after_id", afterId);
     const q = params.toString();
     return request(q ? `/images?${q}` : "/images");

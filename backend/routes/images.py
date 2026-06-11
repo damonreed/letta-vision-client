@@ -1,5 +1,4 @@
 import base64
-from datetime import datetime
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -7,6 +6,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.config import get_settings
+from backend.datetime_cursor import repair_iso_datetime_query_cursor
 from backend.routes.providers import _httpx_get, _httpx_request, _http_error, _letta_headers, _letta_url
 from backend.schemas import FetchImageUrlRequest, FetchImageUrlResponse
 from backend.url_fetch import fetch_image_bytes
@@ -23,20 +23,19 @@ class ImageSearchRequest(BaseModel):
 def list_images(
     limit: int | None = None,
     enrichment_status: str | None = None,
-    after_created_at: datetime | None = None,
+    after_created_at: str | None = None,
     after_id: str | None = None,
 ):
-    query: list[str] = []
+    params: list[tuple[str, str]] = []
     if limit is not None:
-        query.append(f"limit={limit}")
+        params.append(("limit", str(limit)))
     if enrichment_status:
-        query.append(f"enrichment_status={enrichment_status}")
-    if after_created_at is not None:
-        query.append(f"after_created_at={after_created_at.isoformat()}")
+        params.append(("enrichment_status", enrichment_status))
+    if after_created_at:
+        params.append(("after_created_at", repair_iso_datetime_query_cursor(after_created_at)))
     if after_id:
-        query.append(f"after_id={after_id}")
-    suffix = f"?{'&'.join(query)}" if query else ""
-    return _httpx_get(f"/v1/images{suffix}")
+        params.append(("after_id", after_id))
+    return _httpx_get("/v1/images", params=params or None)
 
 
 @router.post("/search")
