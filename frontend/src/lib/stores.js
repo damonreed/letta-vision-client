@@ -2,7 +2,7 @@ import { writable } from "svelte/store";
 
 export const agents = writable([]);
 export const selectedAgentId = writable(null);
-export const currentTab = writable("agents");
+export const currentTab = writable("chat");
 export const conversations = writable([]);
 export const activeConversationId = writable(null);
 export const modelsCache = writable([]);
@@ -90,12 +90,12 @@ export function pickConversationForAgent(agentId, convList) {
 
 export function initFromHash() {
   const hash = window.location.hash.replace("#", "");
-  if (hash === "chat") currentTab.set("chat");
+  if (hash === "agents") currentTab.set("agents");
   else if (hash === "files") currentTab.set("files");
   else if (hash === "images") currentTab.set("images");
   else if (hash === "mcp") currentTab.set("mcp");
   else if (hash === "providers") currentTab.set("providers");
-  else currentTab.set("agents");
+  else currentTab.set("chat");
 }
 
 export function setTab(tab) {

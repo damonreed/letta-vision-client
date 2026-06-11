@@ -44,9 +44,15 @@ export const api = {
   deleteAgent: (id) =>
     request(`/agents/${id}`, { method: "DELETE" }),
 
-  getHistory: (id, conversationId = null) => {
+  getHistory: (id, conversationId = null, { limit = 50, before, full = false } = {}) => {
     const params = new URLSearchParams();
     if (conversationId) params.set("conversation_id", conversationId);
+    if (full) {
+      params.set("full", "true");
+    } else if (limit != null) {
+      params.set("limit", String(limit));
+    }
+    if (before) params.set("before", before);
     const qs = params.toString();
     return request(`/agents/${id}/history${qs ? `?${qs}` : ""}`);
   },
@@ -221,12 +227,20 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  listImages: (limit) => {
+  listImages: ({ limit, enrichmentStatus, afterCreatedAt, afterId } = {}) => {
     const params = new URLSearchParams();
     if (limit != null) params.set("limit", String(limit));
+    if (enrichmentStatus) params.set("enrichment_status", enrichmentStatus);
+    if (afterCreatedAt) params.set("after_created_at", afterCreatedAt);
+    if (afterId) params.set("after_id", afterId);
     const q = params.toString();
     return request(q ? `/images?${q}` : "/images");
   },
+  searchImages: (query, limit = 10) =>
+    request("/images/search", {
+      method: "POST",
+      body: JSON.stringify({ query, limit }),
+    }),
   getImage: (id) => request(`/images/${id}`),
   updateImage: (id, body) =>
     request(`/images/${id}`, { method: "PATCH", body: JSON.stringify(body) }),

@@ -109,6 +109,11 @@
   let streamRecoveryReason = null;
   /** @type {ReturnType<typeof createStreamWatchdog> | null} */
   let activeWatchdog = null;
+  let historyHasMore = $state(false);
+  let loadingOlder = $state(false);
+  let memoryLoadedFor = null;
+
+  const HISTORY_PAGE_SIZE = 50;
 
   const activeAgent = $derived(agentList.find((a) => a.id === agentId));
   const visionCapable = $derived(
@@ -136,14 +141,15 @@
     systemContextRefreshError = "";
     systemContextLoading = true;
     try {
-      if (agentId && conversationId) {
-        const hist = await api.getHistory(agentId, conversationId);
+      refreshSystemContextFromMessages(messages);
+      if (!systemContextContent && agentId && conversationId) {
+        const { messages: hist } = await api.getHistory(agentId, conversationId, {
+          full: true,
+        });
         const normalized = sortMessagesChronological(
           hist.map(normalizeMessage).filter(Boolean)
         );
         refreshSystemContextFromMessages(normalized);
-      } else {
-        refreshSystemContextFromMessages(messages);
       }
     } catch (err) {
       refreshSystemContextFromMessages(messages);
@@ -230,13 +236,25 @@
     return activeStream?.streamId === streamId;
   }
 
+  $effect(() => {
+    if (showMemory && agentId) {
+      void ensureMemoryLoaded(agentId);
+    }
+  });
+
+  $effect(() => {
+    void agentId;
+    memoryLoadedFor = null;
+    memoryBlocks = [];
+    openFiles = [];
+  });
+
   onMount(() => {
     loadAgents();
     const u1 = agents.subscribe((a) => (agentList = a));
     const u2 = selectedAgentId.subscribe((id) => {
       if (id) {
         agentId = id;
-        loadMemory(id);
       }
     });
     const u3 = activeConversationId.subscribe((cid) => {
@@ -278,6 +296,7 @@
       loadHistory(aid, cid);
     } else {
       messages = [];
+      historyHasMore = false;
     }
   });
 
@@ -307,11 +326,14 @@
     saveSelectedAgent(id);
     historyRequest++;
     messages = [];
+    historyHasMore = false;
     activeConversationId.set(pickConversationForAgent(id));
-    await loadMemory(id);
   }
 
-  function applyServerHistory(hist, { id = agentId, convId = conversationId } = {}) {
+  function applyServerHistory(
+    hist,
+    { id = agentId, convId = conversationId, hasMore = false } = {}
+  ) {
     let normalized = sortMessagesChronological(
       dedupeServerHistory(hist).map(normalizeMessage).filter(Boolean)
     );
@@ -321,7 +343,36 @@
       id,
       convId
     );
+    historyHasMore = hasMore;
     refreshSystemContextFromMessages(messages);
+  }
+
+  function oldestLoadedMessageId() {
+    const visible = messages.filter((m) => m.role !== "system");
+    if (visible.length) return visible[0].id;
+    return messages[0]?.id ?? null;
+  }
+
+  function prependServerHistory(
+    hist,
+    { id = agentId, convId = conversationId, hasMore = false } = {}
+  ) {
+    const existingIds = new Set(messages.map((m) => m.id));
+    let older = sortMessagesChronological(
+      dedupeServerHistory(hist).map(normalizeMessage).filter(Boolean)
+    );
+    older = older.filter((m) => !existingIds.has(m.id));
+    if (!older.length) {
+      historyHasMore = hasMore;
+      return false;
+    }
+    messages = filterDismissedMessages(
+      withUniqueMessageIds([...older, ...messages]),
+      id,
+      convId
+    );
+    historyHasMore = hasMore;
+    return true;
   }
 
   async function syncConversationFromServer(
@@ -331,11 +382,19 @@
   ) {
     if (!streamAgentId || !streamConversationId) return;
     try {
-      const hist = await api.getHistory(streamAgentId, streamConversationId);
+      const { messages: hist, has_more: hasMore } = await api.getHistory(
+        streamAgentId,
+        streamConversationId,
+        { limit: HISTORY_PAGE_SIZE }
+      );
       if (streamAgentId !== agentId || streamConversationId !== conversationId) {
         return;
       }
-      applyServerHistory(hist, { id: streamAgentId, convId: streamConversationId });
+      applyServerHistory(hist, {
+        id: streamAgentId,
+        convId: streamConversationId,
+        hasMore,
+      });
       if (reason) {
         error = reason;
       } else {
@@ -367,7 +426,7 @@
     stopActiveStream();
     if (agentId && conversationId) {
       await syncConversationFromServer(agentId, conversationId, { reason: notifyReason });
-      await loadMemory(agentId);
+      if (showMemory) await ensureMemoryLoaded(agentId);
     }
   }
 
@@ -383,15 +442,60 @@
     const requestId = ++historyRequest;
     error = "";
     try {
-      const hist = await api.getHistory(id, convId);
+      const { messages: hist, has_more: hasMore } = await api.getHistory(id, convId, {
+        limit: HISTORY_PAGE_SIZE,
+      });
       if (requestId !== historyRequest) return;
-      applyServerHistory(hist, { id, convId });
+      applyServerHistory(hist, { id, convId, hasMore });
       stickToBottom = true;
       await scrollToBottom();
     } catch (err) {
       if (requestId !== historyRequest) return;
       error = err.message;
     }
+  }
+
+  async function loadOlderHistory() {
+    if (!agentId || !conversationId || !historyHasMore || loadingOlder) return;
+    const before = oldestLoadedMessageId();
+    if (!before) return;
+
+    const requestId = historyRequest;
+    loadingOlder = true;
+    const el = listEl;
+    const prevScrollHeight = el?.scrollHeight ?? 0;
+    stickToBottom = false;
+    error = "";
+
+    try {
+      const { messages: hist, has_more: hasMore } = await api.getHistory(
+        agentId,
+        conversationId,
+        { limit: HISTORY_PAGE_SIZE, before }
+      );
+      if (requestId !== historyRequest) return;
+      const added = prependServerHistory(hist, {
+        id: agentId,
+        convId: conversationId,
+        hasMore,
+      });
+      if (added) {
+        await tick();
+        if (el) {
+          el.scrollTop += el.scrollHeight - prevScrollHeight;
+        }
+      }
+    } catch (err) {
+      if (requestId === historyRequest) error = err.message;
+    } finally {
+      loadingOlder = false;
+    }
+  }
+
+  async function ensureMemoryLoaded(id) {
+    if (!id || memoryLoadedFor === id) return;
+    memoryLoadedFor = id;
+    await loadMemory(id);
   }
 
   async function loadMemory(id) {
@@ -1038,6 +1142,16 @@
     {#if dropOverlay}<div class="drop-overlay">Drop image to attach</div>{/if}
     <ConversationList agentId={agentId} />
     <div class="messages" bind:this={listEl} onscroll={onMessagesScroll} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
+      {#if historyHasMore}
+        <button
+          type="button"
+          class="load-older"
+          disabled={loadingOlder}
+          onclick={loadOlderHistory}
+        >
+          {loadingOlder ? "Loading…" : "Load older messages"}
+        </button>
+      {/if}
       {#each displayGroups as group, groupIndex (group.key)}
         {#if group.type === "user" || group.type === "single"}
           {#each group.messages as msg, i (messageListKey(msg, i))}
@@ -1457,6 +1571,7 @@
     flex-direction: column;
     gap: 0.75rem;
   }
+  .load-older,
   .turn-expand {
     align-self: flex-start;
     background: #f3f4f6;
@@ -1467,7 +1582,16 @@
     color: #374151;
     cursor: pointer;
   }
-  .turn-expand:hover {
+  .load-older {
+    align-self: center;
+    margin: 0.25rem auto 0.75rem;
+  }
+  .load-older:disabled {
+    opacity: 0.65;
+    cursor: default;
+  }
+  .turn-expand:hover,
+  .load-older:hover:not(:disabled) {
     background: #e5e7eb;
   }
   .msg-header {

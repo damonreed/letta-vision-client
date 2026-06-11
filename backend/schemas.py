@@ -110,6 +110,11 @@ class ConversationSummary(BaseModel):
     created_at: str | None = None
 
 
+class HistoryResponse(BaseModel):
+    messages: list
+    has_more: bool = False
+
+
 class CreateFolderRequest(BaseModel):
     name: str
     description: str = ""

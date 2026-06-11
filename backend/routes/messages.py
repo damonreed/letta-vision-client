@@ -5,12 +5,13 @@ from fastapi.responses import StreamingResponse
 
 from backend.config import get_letta_client, get_settings
 from backend.letta_lists import collect_sync_page
-from backend.schemas import SendMessageRequest, serialize
+from backend.schemas import HistoryResponse, SendMessageRequest, serialize
 from backend.sse import stream_events
 
 router = APIRouter(prefix="/api/agents", tags=["messages"])
 
 DEFAULT_CONVERSATION_ID = "default"
+HISTORY_DEFAULT_LIMIT = 50
 
 
 def _conv_id(conversation_id: str | None) -> str:
@@ -47,6 +48,20 @@ def _normalize_input_content(content: str | list) -> str | list:
     return normalized
 
 
+def _messages_list_page(client, conv: str, agent_id: str, **kwargs) -> list:
+    if conv == DEFAULT_CONVERSATION_ID:
+        page = client.conversations.messages.list(
+            DEFAULT_CONVERSATION_ID,
+            agent_id=agent_id,
+            **kwargs,
+        )
+    else:
+        page = client.conversations.messages.list(conv, **kwargs)
+    if hasattr(page, "items"):
+        return list(page.items)
+    return list(page)
+
+
 def _list_all_messages(client, conv: str, agent_id: str) -> list:
     """Return full conversation history (all pages, chronological)."""
     if conv == DEFAULT_CONVERSATION_ID:
@@ -58,6 +73,25 @@ def _list_all_messages(client, conv: str, agent_id: str) -> list:
     else:
         page = client.conversations.messages.list(conv, order="asc")
     return collect_sync_page(page)
+
+
+def _fetch_history_window(
+    client,
+    conv: str,
+    agent_id: str,
+    *,
+    limit: int,
+    before: str | None = None,
+) -> tuple[list, bool]:
+    """Fetch a recent or older page (newest-first from API; client sorts chronologically)."""
+    kwargs: dict = {"order": "desc", "limit": limit + 1}
+    if before:
+        kwargs["before"] = before
+    items = _messages_list_page(client, conv, agent_id, **kwargs)
+    has_more = len(items) > limit
+    if has_more:
+        items = items[:limit]
+    return items, has_more
 
 
 @router.post("/{agent_id}/messages")
@@ -107,15 +141,27 @@ def send_message(
     )
 
 
-@router.get("/{agent_id}/history")
+@router.get("/{agent_id}/history", response_model=HistoryResponse)
 def get_history(
     agent_id: str,
     conversation_id: str | None = Query(None),
+    limit: int = Query(HISTORY_DEFAULT_LIMIT, ge=1, description="Page size for windowed history"),
+    before: str | None = Query(None, description="Message ID cursor for loading older rows"),
+    full: bool = Query(False, description="Return full history (all pages, ascending)"),
 ):
     client = get_letta_client()
     conv = _conv_id(conversation_id)
     try:
-        messages = _list_all_messages(client, conv, agent_id)
+        if full:
+            messages = _list_all_messages(client, conv, agent_id)
+            has_more = False
+        else:
+            messages, has_more = _fetch_history_window(
+                client, conv, agent_id, limit=limit, before=before
+            )
     except Exception as e:
         raise HTTPException(status_code=404, detail={"error": str(e)}) from e
-    return [serialize(m) for m in messages]
+    return HistoryResponse(
+        messages=[serialize(m) for m in messages],
+        has_more=has_more,
+    )

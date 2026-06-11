@@ -8,7 +8,12 @@
   import Providers from "./routes/Providers.svelte";
   import { currentTab, initFromHash, setTab } from "./lib/stores.js";
 
-  let tab = $state("agents");
+  let tab = $state("chat");
+  let chatMounted = $state(true);
+
+  $effect(() => {
+    if (tab === "chat") chatMounted = true;
+  });
 
   onMount(() => {
     initFromHash();
@@ -30,44 +35,46 @@
   <header>
     <h1>letta-vision-client</h1>
     <nav>
-      <button class:active={tab === "agents"} onclick={() => navigate("agents")}>
-        Agents
-      </button>
-      <button class:active={tab === "providers"} onclick={() => navigate("providers")}>
-        Providers
-      </button>
       <button class:active={tab === "chat"} onclick={() => navigate("chat")}>
         Chat
-      </button>
-      <button class:active={tab === "files"} onclick={() => navigate("files")}>
-        Files
       </button>
       <button class:active={tab === "images"} onclick={() => navigate("images")}>
         Images
       </button>
+      <button class:active={tab === "files"} onclick={() => navigate("files")}>
+        Files
+      </button>
+      <button class:active={tab === "agents"} onclick={() => navigate("agents")}>
+        Agents
+      </button>
       <button class:active={tab === "mcp"} onclick={() => navigate("mcp")}>
         MCP
+      </button>
+      <button class:active={tab === "providers"} onclick={() => navigate("providers")}>
+        Providers
       </button>
     </nav>
   </header>
   <main>
-    <div class="tab-panel" class:hidden={tab !== "agents"}>
-      <Agents />
-    </div>
-    <div class="tab-panel" class:hidden={tab !== "providers"}>
-      <Providers />
-    </div>
-    <div class="tab-panel" class:hidden={tab !== "chat"}>
-      <Chat />
+    {#if chatMounted}
+      <div class="tab-panel" class:hidden={tab !== "chat"}>
+        <Chat />
+      </div>
+    {/if}
+    <div class="tab-panel" class:hidden={tab !== "images"}>
+      <Images />
     </div>
     <div class="tab-panel" class:hidden={tab !== "files"}>
       <Files />
     </div>
-    <div class="tab-panel" class:hidden={tab !== "images"}>
-      <Images />
+    <div class="tab-panel" class:hidden={tab !== "agents"}>
+      <Agents />
     </div>
     <div class="tab-panel" class:hidden={tab !== "mcp"}>
       <Mcp />
+    </div>
+    <div class="tab-panel" class:hidden={tab !== "providers"}>
+      <Providers />
     </div>
   </main>
 </div>
@@ -94,6 +101,7 @@
   nav {
     display: flex;
     gap: 0.5rem;
+    flex-wrap: wrap;
   }
   nav button {
     padding: 0.4rem 0.9rem;

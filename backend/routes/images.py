@@ -1,8 +1,10 @@
 import base64
+from datetime import datetime
 
 import httpx
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from backend.config import get_settings
 from backend.routes.providers import _httpx_get, _httpx_request, _http_error, _letta_headers, _letta_url
@@ -12,15 +14,34 @@ from backend.url_fetch import fetch_image_bytes
 router = APIRouter(prefix="/api/images", tags=["images"])
 
 
+class ImageSearchRequest(BaseModel):
+    query: str
+    limit: int = 10
+
+
 @router.get("")
-def list_images(limit: int | None = None, enrichment_status: str | None = None):
+def list_images(
+    limit: int | None = None,
+    enrichment_status: str | None = None,
+    after_created_at: datetime | None = None,
+    after_id: str | None = None,
+):
     query: list[str] = []
     if limit is not None:
         query.append(f"limit={limit}")
     if enrichment_status:
         query.append(f"enrichment_status={enrichment_status}")
+    if after_created_at is not None:
+        query.append(f"after_created_at={after_created_at.isoformat()}")
+    if after_id:
+        query.append(f"after_id={after_id}")
     suffix = f"?{'&'.join(query)}" if query else ""
     return _httpx_get(f"/v1/images{suffix}")
+
+
+@router.post("/search")
+def search_images(body: ImageSearchRequest):
+    return _httpx_request("POST", "/v1/images/search", json=body.model_dump())
 
 
 @router.get("/{image_id}")
@@ -62,6 +83,7 @@ def get_image_content(image_id: str, variant: str = "full"):
         raise _http_error(res)
     media_type = res.headers.get("content-type", "application/octet-stream")
     return Response(content=res.content, media_type=media_type)
+
 
 DEFAULT_MAX_IMAGE_FETCH_BYTES = 20 * 1024 * 1024
 FETCH_TIMEOUT_SECONDS = 60.0

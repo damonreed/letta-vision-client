@@ -17,46 +17,7 @@ router = APIRouter(prefix="/api", tags=["conversations"])
 DEFAULT_CONVERSATION_ID = "default"
 
 
-# Sidebar preview only — not a cap on history returned to the chat view.
-PREVIEW_MAX_CHARS = 60
-
-
-def _message_preview(message) -> str:
-    data = serialize(message)
-    content = data.get("content")
-    if isinstance(content, str):
-        text = content
-    elif isinstance(content, list):
-        text = " ".join(
-            p.get("text", "") if isinstance(p, dict) else str(p) for p in content
-        )
-    else:
-        text = data.get("reasoning") or ""
-    if not text and data.get("tool_call"):
-        text = str(data["tool_call"])
-    return (text or "")[:PREVIEW_MAX_CHARS]
-
-
-def _last_preview(client, conversation_id: str, agent_id: str) -> str:
-    try:
-        # One message is enough for sidebar preview text (not a history truncation).
-        kwargs = {"limit": 1, "order": "desc"}
-        if conversation_id == DEFAULT_CONVERSATION_ID:
-            messages = client.conversations.messages.list(
-                DEFAULT_CONVERSATION_ID, agent_id=agent_id, **kwargs
-            ).items
-        else:
-            messages = client.conversations.messages.list(
-                conversation_id, **kwargs
-            ).items
-        if messages:
-            return _message_preview(messages[0])
-    except Exception:
-        pass
-    return ""
-
-
-def _to_summary(client, conv, *, is_default: bool = False) -> ConversationSummary:
+def _to_summary(conv, *, is_default: bool = False) -> ConversationSummary:
     data = serialize(conv)
     conv_id = DEFAULT_CONVERSATION_ID if is_default else data.get("id", "")
     agent_id = data.get("agent_id", "")
@@ -64,14 +25,13 @@ def _to_summary(client, conv, *, is_default: bool = False) -> ConversationSummar
     last_at = data.get("last_message_at")
     if isinstance(last_at, datetime):
         last_at = last_at.isoformat()
-    preview = _last_preview(client, conv_id, agent_id) if agent_id else ""
     return ConversationSummary(
         id=conv_id,
         agent_id=agent_id,
         name=name,
         is_default=is_default,
         last_message_at=last_at,
-        last_message_preview=preview,
+        last_message_preview=None,
         created_at=(
             data.get("created_at").isoformat()
             if isinstance(data.get("created_at"), datetime)
@@ -80,15 +40,14 @@ def _to_summary(client, conv, *, is_default: bool = False) -> ConversationSummar
     )
 
 
-def _default_summary(client, agent_id: str) -> ConversationSummary:
-    preview = _last_preview(client, DEFAULT_CONVERSATION_ID, agent_id)
+def _default_summary(agent_id: str) -> ConversationSummary:
     return ConversationSummary(
         id=DEFAULT_CONVERSATION_ID,
         agent_id=agent_id,
         name="Default conversation",
         is_default=True,
         last_message_at=None,
-        last_message_preview=preview,
+        last_message_preview=None,
         created_at=None,
     )
 
@@ -98,14 +57,18 @@ def list_conversations(agent_id: str):
     client = get_letta_client()
     try:
         items = collect_sync_page(
-            client.conversations.list(agent_id=agent_id, order="desc")
+            client.conversations.list(
+                agent_id=agent_id,
+                order="desc",
+                order_by="last_message_at",
+            )
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
 
-    summaries = [_default_summary(client, agent_id)]
+    summaries = [_default_summary(agent_id)]
     for conv in items:
-        summaries.append(_to_summary(client, conv))
+        summaries.append(_to_summary(conv))
     return summaries
 
 
@@ -119,7 +82,7 @@ def create_conversation(agent_id: str, body: CreateConversationRequest):
         conv = client.conversations.create(agent_id=agent_id, summary=name)
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
-    return _to_summary(client, conv)
+    return _to_summary(conv)
 
 
 @router.patch("/conversations/{conversation_id}")
@@ -136,7 +99,7 @@ def update_conversation(conversation_id: str, body: UpdateConversationRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
-    return _to_summary(client, conv)
+    return _to_summary(conv)
 
 
 @router.post("/agents/{agent_id}/conversations/{conversation_id}/recompile-context")
