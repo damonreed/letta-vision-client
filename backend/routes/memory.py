@@ -1,8 +1,13 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from backend.config import get_letta_client
+from backend.context_refresh import recompile_agent_conversations
 from backend.letta_lists import collect_sync_page
 from backend.schemas import CreateBlockRequest, UpdateBlockRequest, serialize
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["memory"])
 
@@ -46,7 +51,16 @@ def update_block(agent_id: str, label: str, body: UpdateBlockRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
-    return serialize(block)
+    recompiled = 0
+    try:
+        recompiled = recompile_agent_conversations(client, agent_id)
+    except Exception as exc:
+        logger.warning(
+            "Block saved but context recompile failed for agent %s: %s",
+            agent_id,
+            exc,
+        )
+    return {**serialize(block), "recompiled": recompiled}
 
 
 @router.post("/{agent_id}/blocks")

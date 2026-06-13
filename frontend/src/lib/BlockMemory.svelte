@@ -21,6 +21,8 @@
   let createError = $state("");
   let attachError = $state("");
   let detachTarget = $state(null);
+  let saveMessage = $state("");
+  let blocksSyncKey = $state("");
 
   let createForm = $state({
     label: "",
@@ -35,12 +37,27 @@
   );
 
   $effect(() => {
-    blockEdits = Object.fromEntries(blocks.map((b) => [b.id, b.value ?? ""]));
-    loadBlockAgents(blocks);
+    agentId;
+    blocksSyncKey = "";
+    saveMessage = "";
+  });
+
+  $effect(() => {
     if (!blocks.length) {
       selectedBlockId = null;
-    } else if (!blocks.some((b) => b.id === selectedBlockId)) {
+      return;
+    }
+    if (!blocks.some((b) => b.id === selectedBlockId)) {
       selectedBlockId = blocks[0].id;
+    }
+  });
+
+  $effect(() => {
+    const key = blocks.map((b) => `${b.id}\0${b.value ?? ""}`).join("\n");
+    if (key !== blocksSyncKey) {
+      blocksSyncKey = key;
+      blockEdits = Object.fromEntries(blocks.map((b) => [b.id, b.value ?? ""]));
+      loadBlockAgents(blocks);
     }
   });
 
@@ -161,8 +178,14 @@
   }
 
   async function saveBlock(block) {
+    saveMessage = "";
     try {
-      await api.updateBlock(agentId, block.label, blockEdits[block.id]);
+      const res = await api.updateBlock(agentId, block.label, blockEdits[block.id]);
+      const n = res.recompiled ?? 0;
+      saveMessage =
+        n > 0
+          ? `Saved "${block.label}" and refreshed context in ${n} conversation(s).`
+          : `Saved "${block.label}".`;
       await onReload();
     } catch (err) {
       onError(err.message);
@@ -187,7 +210,7 @@
   }
 
   function charCount(block) {
-    const len = (block.value ?? "").length;
+    const len = (blockEdits[block.id] ?? block.value ?? "").length;
     const limit = block.limit ?? 100000;
     return `${len} / ${limit} chars`;
   }
@@ -258,6 +281,9 @@
               Detach
             </button>
           </div>
+          {#if saveMessage}
+            <p class="save-status">{saveMessage}</p>
+          {/if}
         </div>
       {/if}
     </div>
@@ -516,6 +542,11 @@
   .block-actions .muted {
     background: #f3f4f6;
     border: 1px solid #ddd;
+  }
+  .save-status {
+    margin: 0.5rem 0 0;
+    font-size: 0.85rem;
+    color: #166534;
   }
   .empty {
     color: #888;
