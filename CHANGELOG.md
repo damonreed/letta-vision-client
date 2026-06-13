@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-13
+
+### Added
+
+- Images tab GA inspector: list+detail shell, paginated browse, hybrid search, inline metadata PATCH, click-to-zoom.
+- Images API proxy: list with cursor, search, get, delete, re-enrich, content variants.
+- Chat windowed history (`has_more`, load older); conversation sidebar without N+1 preview fetch.
+- Tool-result image rendering and `file_id` dedupe; `letta` image refs in chat history.
+- `docs/RELEASE_NOTES_v0.6.0.md`.
+
+### Changed
+
+- Nav order Chat-first; Chat default tab; mount-once (tab switches preserve stream/draft).
+- Deferred memory panel load until panel open.
+- Tool catalog synced for hybrid search tools (`search_all`, `image_fetch`, layer tools).
+- Removed per-agent and per-folder embedding UI pickers.
+
+### Fixed
+
+- Files tab optimistic delete (background recompile; no UI hang).
+- Images browse pagination cursor datetime encoding.
+- Hide synthetic default conversation from Chat sidebar.
+- Agent markdown when opening stage directions are indented.
+- `fetch_image` display and conversation ID copy on HTTP errors.
+
 ## [0.5.0] - 2026-06-01
 
 ### Added
@@ -89,7 +114,8 @@ Pre-vision baseline: text chat bridge; smoke script for multimodal API only.
 - Docker image and standalone `docker-compose.yml`.
 - Stress-test scripts for empirical limit discovery.
 
-[Unreleased]: https://github.com/damonreed/letta-vision-client/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/damonreed/letta-vision-client/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.6.0
 [0.5.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.5.0
 [0.4.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.4.0
 [0.3.0]: https://github.com/damonreed/letta-vision-client/releases/tag/v0.3.0
