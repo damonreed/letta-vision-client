@@ -6,9 +6,14 @@ export type ImageBlock = {
 };
 
 const LS_PREFIX = "letta-vision-client/";
-const DEFAULT_MAX_EDGE = 1024;
+const DEFAULT_MAX_EDGE = 1920;
 const DEFAULT_JPEG_QUALITY = 0.85;
 const DEFAULT_MAX_UPLOAD = 20 * 1024 * 1024;
+
+/** PNG/GIF captures (e.g. macOS screenshots) should not be canvas-resized before upload. */
+function isLosslessCaptureType(mediaType: string): boolean {
+  return mediaType === "image/png" || mediaType === "image/gif";
+}
 
 export function getImageSettings() {
   const maxEdge = Number(localStorage.getItem(`${LS_PREFIX}image-max-edge`) || DEFAULT_MAX_EDGE);
@@ -38,8 +43,9 @@ async function blobToImageBlock(blob: Blob, fileName = "image"): Promise<ImageBl
   if (blob.size > maxUpload) {
     throw new Error(`Image is too large (max ${Math.round(maxUpload / 1024 / 1024)} MiB).`);
   }
-  if (preserveOriginal) {
-    const dataUrl = await readFileAsDataUrl(new File([blob], fileName, { type: blob.type }));
+  const mediaType = blob.type || "image/jpeg";
+  if (preserveOriginal || isLosslessCaptureType(mediaType)) {
+    const dataUrl = await readFileAsDataUrl(new File([blob], fileName, { type: mediaType }));
     const { media_type, data } = dataUrlToBase64(dataUrl);
     return { type: "image", source: { type: "base64", media_type, data } };
   }

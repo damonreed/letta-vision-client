@@ -125,7 +125,7 @@ MCP servers are **org-scoped** in Letta. Agents do not connect to servers direct
 
 ## Vision support (v0.3.0+)
 
-- **Input:** File picker, drag-drop, clipboard paste, and URL fetch in the browser. Images are downscaled/re-encoded in `frontend/src/lib/imagePipeline.ts` before send.
+- **Input:** File picker, drag-drop, clipboard paste, and URL fetch in the browser. JPEG/WebP photos may be downscaled in `frontend/src/lib/imagePipeline.ts` before send; PNG/GIF screenshots are sent at native resolution (up to the upload cap).
 - **Outbound shape:** `POST /api/agents/{id}/messages` accepts `content` as a string or an array of `{type: text|image}` blocks (proxied to Letta `input`).
 - **Capability UI:** `GET /api/models` exposes `supports_vision`; attach controls are disabled for text-only agents; Agents list shows a Vision badge.
 - **Rendering:** History and optimistic sends render image blocks via `contentBlocks.js` + `ImageViewer.svelte` (never raw base64 text).
