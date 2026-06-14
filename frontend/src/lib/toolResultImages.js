@@ -146,7 +146,8 @@ function imageDisplayFingerprint(src) {
   if (!src?.startsWith("data:")) return src || "";
   const comma = src.indexOf(",");
   const payload = comma >= 0 ? src.slice(comma + 1) : src;
-  return `b64:${payload.length}:${payload.slice(0, 64)}`;
+  // Full payload — batch JPEGs from generate_image share long identical header prefixes.
+  return `b64:${payload.length}:${payload}`;
 }
 
 /**
