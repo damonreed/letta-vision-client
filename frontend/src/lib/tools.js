@@ -34,7 +34,6 @@ export const LEGACY_MEMORY_TOOL_NAMES = [
   "search_memory",
   "store_memories",
   "recall",
-  "fetch_image",
   "search_file_archives",
   "search_file_contents",
   "search_archives",
@@ -60,7 +59,12 @@ export const TOOL_GROUPS = [
   {
     id: "conversations",
     label: "Conversations",
-    tools: ["conversation_search", "search_all", "image_fetch", "image_get_text", "image_edit_text", "image_search"],
+    tools: ["conversation_search", "search_all"],
+  },
+  {
+    id: "images",
+    label: "Images",
+    tools: ["image_fetch", "image_get_text", "image_edit_text", "image_search", "fetch_image"],
   },
   {
     id: "file-access",
