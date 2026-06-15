@@ -27,8 +27,8 @@ REQUIRED_BASE_TOOL_NAMES = {
     "file_read_range",
     "file_grep",
     "update_file_headline",
-    "write_file_archive",
-    "file_archives_search",
+    "write_file_note",
+    "file_notes_search",
     "file_contents_search",
 }
 
