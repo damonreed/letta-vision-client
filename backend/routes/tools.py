@@ -11,6 +11,8 @@ REQUIRED_BASE_TOOL_NAMES = {
     "send_message",
     "search_all",
     "image_fetch",
+    "image_get_text",
+    "image_edit_text",
     "image_search",
     "conversation_search",
     "archival_memory_insert",

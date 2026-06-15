@@ -4,6 +4,8 @@ export const DEFAULT_TOOL_NAMES = [
   "memory",
   "search_all",
   "image_fetch",
+  "image_get_text",
+  "image_edit_text",
   "image_search",
   "conversation_search",
   "archival_memory_insert",
@@ -58,7 +60,7 @@ export const TOOL_GROUPS = [
   {
     id: "conversations",
     label: "Conversations",
-    tools: ["conversation_search", "search_all", "image_fetch", "image_search"],
+    tools: ["conversation_search", "search_all", "image_fetch", "image_get_text", "image_edit_text", "image_search"],
   },
   {
     id: "file-access",
