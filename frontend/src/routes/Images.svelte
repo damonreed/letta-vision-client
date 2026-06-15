@@ -491,7 +491,7 @@
           </label>
           <label>
             Details
-            <span class="hint-inline">Extended literal description (~1000 words)</span>
+            <span class="hint-inline">Prompt-ready literal description (1500-2000 words, structured sections)</span>
             <textarea bind:value={editForm.details} rows="16" oninput={onEditInput}></textarea>
           </label>
           <div class="editor-actions">
