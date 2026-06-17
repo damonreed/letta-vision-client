@@ -142,6 +142,8 @@ export const api = {
     }),
   detachTool: (agentId, toolId) =>
     request(`/agents/${agentId}/tools/${toolId}`, { method: "DELETE" }),
+  refreshAgentTools: (agentId) =>
+    request(`/agents/${agentId}/tools/refresh`, { method: "POST" }),
 
   listModels: () => request("/models"),
   setModelVisionOverride: (handle, supports_vision) =>

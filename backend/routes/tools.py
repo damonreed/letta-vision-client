@@ -26,6 +26,8 @@ REQUIRED_BASE_TOOL_NAMES = {
     "file_read_prev_page",
     "file_read_range",
     "file_grep",
+    "file_add",
+    "file_edit_text",
     "update_file_headline",
     "write_file_note",
     "file_notes_search",
@@ -73,3 +75,15 @@ def detach_tool(agent_id: str, tool_id: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
     return serialize(agent) if agent else {"ok": True}
+
+
+@router.post("/agents/{agent_id}/tools/refresh")
+def refresh_agent_tools(agent_id: str):
+    settings = get_settings()
+    url = f"{settings.letta_base_url.rstrip('/')}/v1/agents/{agent_id}/tools/refresh"
+    headers = {"Authorization": f"Bearer {settings.letta_server_password}"}
+    with httpx.Client(timeout=settings.letta_client_read_timeout_seconds) as http:
+        res = http.post(url, headers=headers)
+    if res.status_code >= 400:
+        raise HTTPException(status_code=res.status_code, detail={"error": res.text})
+    return res.json()

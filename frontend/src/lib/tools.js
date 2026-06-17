@@ -71,7 +71,8 @@ export const TOOL_GROUPS = [
     id: "file-access",
     label: "File Access and Search",
     tools: [
-      "add_text_file",
+      "file_add",
+      "file_edit_text",
       "write_file_note",
       "file_notes_search",
       "update_file_headline",

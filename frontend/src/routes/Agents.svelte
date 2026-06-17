@@ -270,6 +270,19 @@
     }, 5000);
   }
 
+  async function refreshAgentTools() {
+    if (!selectedId) return;
+    const res = await api.refreshAgentTools(selectedId);
+    allTools = await api.listTools();
+    await loadDetail(selectedId);
+    const added = res.added_tools || [];
+    showToast(
+      added.length
+        ? `Added tools: ${added.join(", ")}`
+        : "Tools up to date — nothing new to attach",
+    );
+  }
+
   async function saveName() {
     const name = editName.trim();
     if (!name) {
@@ -607,6 +620,7 @@
               bind:selectedIds={attachedToolIds}
               layout="master-detail"
               onError={showToast}
+              onRefresh={refreshAgentTools}
             />
           {/if}
         </div>

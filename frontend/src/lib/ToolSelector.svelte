@@ -2,12 +2,13 @@
   import { api } from "./api.js";
   import { buildToolSections } from "./tools.js";
 
-  /** @type {{ allTools: any[], selectedIds?: string[], agentId?: string | null, onError?: (msg: string) => void, layout?: 'grid' | 'master-detail' }} */
+  /** @type {{ allTools: any[], selectedIds?: string[], agentId?: string | null, onError?: (msg: string) => void, onRefresh?: () => void | Promise<void>, layout?: 'grid' | 'master-detail' }} */
   let {
     allTools = [],
     selectedIds = $bindable([]),
     agentId = null,
     onError = (msg) => {},
+    onRefresh = null,
     layout = "grid",
   } = $props();
 
@@ -15,6 +16,7 @@
 
   let selectedSectionId = $state(null);
   let pending = $state(new Set());
+  let refreshing = $state(false);
 
   const sections = $derived(buildToolSections(allTools));
   const visibleSections = $derived(sections.filter((s) => s.tools.length > 0));
@@ -78,6 +80,18 @@
       pending = next;
     }
   }
+
+  async function refreshTools() {
+    if (!onRefresh || refreshing) return;
+    refreshing = true;
+    try {
+      await onRefresh();
+    } catch (err) {
+      onError(err?.message || "Tools refresh failed");
+    } finally {
+      refreshing = false;
+    }
+  }
 </script>
 
 {#if layout === "master-detail"}
@@ -100,6 +114,18 @@
               </span>
             </button>
           {/each}
+          {#if onRefresh}
+            <div class="category-footer">
+              <button
+                type="button"
+                class="refresh-btn"
+                disabled={refreshing}
+                onclick={refreshTools}
+              >
+                {refreshing ? "Refreshing…" : "Tools Refresh"}
+              </button>
+            </div>
+          {/if}
         </nav>
 
         {#if selectedSection}
@@ -168,6 +194,7 @@
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    min-height: 0;
     border-right: 1px solid #e5e7eb;
     background: #fafafa;
   }
@@ -189,6 +216,29 @@
   }
   .category-list button.selected {
     background: #eff6ff;
+  }
+  .category-footer {
+    margin-top: auto;
+    padding: 0.5rem 0.6rem 0.65rem;
+    border-top: 1px solid #e5e7eb;
+    background: #fafafa;
+  }
+  .refresh-btn {
+    width: 100%;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.78rem;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: #fff;
+    color: #374151;
+    cursor: pointer;
+  }
+  .refresh-btn:hover:not(:disabled) {
+    background: #f9fafb;
+  }
+  .refresh-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
   .category-label {
     font-size: 0.85rem;
