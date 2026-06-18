@@ -14,6 +14,8 @@
     isFailedTurnGroup,
     isRegeneratableFailure,
     isRealUserMessage,
+    topPendingUserTurn,
+    userTurnPresentInHistory,
     mergeCachedUserTurn,
     outgoingFromUserMessage,
     outgoingHasImage,
@@ -76,6 +78,7 @@
   let input = $state("");
   let streaming = $state(false);
   let error = $state("");
+  let recoveryNotice = $state("");
   let showMemory = $state(false);
   let showSystemContext = $state(false);
   let systemContextContent = $state("");
@@ -375,6 +378,17 @@
     return true;
   }
 
+  function restoreComposerFromPendingTurn(id, convId, hist) {
+    const pending = topPendingUserTurn(loadUserTurn(id, convId));
+    if (!pending?.userMsg || userTurnPresentInHistory(pending, hist)) return false;
+    const text = typeof pending.userMsg.content === "string" ? pending.userMsg.content : "";
+    input = text;
+    saveChatDraft(id, convId, text);
+    const imageBlock = pending.userMsg.contentBlocks?.find((b) => b?.type === "image");
+    pendingAttachment = imageBlock || null;
+    return true;
+  }
+
   async function syncConversationFromServer(
     streamAgentId,
     streamConversationId,
@@ -395,9 +409,18 @@
         convId: streamConversationId,
         hasMore,
       });
+      const restoredToComposer = restoreComposerFromPendingTurn(
+        streamAgentId,
+        streamConversationId,
+        messages
+      );
       if (reason) {
-        error = reason;
+        recoveryNotice = restoredToComposer
+          ? `${reason} Your message was restored to the composer so you can send again.`
+          : reason;
+        error = "";
       } else {
+        recoveryNotice = "";
         error = "";
       }
       streamRecoveryReason = null;
@@ -405,7 +428,9 @@
       await scrollToBottom();
     } catch (err) {
       if (streamAgentId === agentId && streamConversationId === conversationId) {
-        error = reason ? `${reason} (${err.message})` : err.message;
+        const detail = reason ? `${reason} (${err.message})` : err.message;
+        error = detail;
+        recoveryNotice = "";
       }
     }
   }
@@ -441,6 +466,7 @@
     if (!id || !convId) return;
     const requestId = ++historyRequest;
     error = "";
+    recoveryNotice = "";
     try {
       const { messages: hist, has_more: hasMore } = await api.getHistory(id, convId, {
         limit: HISTORY_PAGE_SIZE,
@@ -790,6 +816,7 @@
     streaming = true;
     stickToBottom = true;
     error = "";
+    recoveryNotice = "";
     streamUserCancelled = false;
     streamRecoveryReason = null;
 
@@ -1121,6 +1148,17 @@
     {/if}
   </header>
 
+  {#if recoveryNotice}
+    <p class="recovery-notice">
+      {recoveryNotice}
+      <button type="button" class="ghost recover-btn" onclick={() => recoverChat()}>
+        Refresh chat
+      </button>
+      <button type="button" class="ghost dismiss-btn" onclick={() => (recoveryNotice = "")}>
+        Dismiss
+      </button>
+    </p>
+  {/if}
   {#if error}
     <p class="error">
       {error}
@@ -1795,6 +1833,18 @@
     background: #fef2f2;
     border-bottom: 1px solid #fecaca;
   }
+  .recovery-notice {
+    color: #92400e;
+    margin: 0;
+    padding: 0.5rem 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    background: #fffbeb;
+    border-bottom: 1px solid #fde68a;
+    font-size: 0.9rem;
+  }
   .streaming-banner {
     margin: 0;
     padding: 0.35rem 1rem;
@@ -1807,7 +1857,8 @@
     gap: 0.75rem;
   }
   .recover-btn,
-  .cancel-btn {
+  .cancel-btn,
+  .dismiss-btn {
     font-size: 0.8rem;
     padding: 0.2rem 0.5rem;
     border: 1px solid #d1d5db;

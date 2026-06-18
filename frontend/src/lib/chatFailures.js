@@ -117,20 +117,70 @@ export function findPrecedingUserGroup(groups, index) {
   return null;
 }
 
+function normalizeCachedStack(cached) {
+  if (!cached) return [];
+  if (Array.isArray(cached.stack)) return [...cached.stack];
+  if (cached.userMsg) {
+    return [{ userMsg: cached.userMsg, outgoing: cached.outgoing, savedAt: cached.savedAt }];
+  }
+  return [];
+}
+
+function outgoingSignature(outgoing) {
+  if (typeof outgoing === "string") return `text:${outgoing}`;
+  if (!Array.isArray(outgoing)) return null;
+  return JSON.stringify(
+    outgoing.map((block) => {
+      if (block?.type === "text") return { t: "text", v: block.text };
+      if (block?.type === "image") {
+        const data = block.source?.data;
+        return { t: "image", d: typeof data === "string" ? data.slice(0, 64) : "" };
+      }
+      return block;
+    })
+  );
+}
+
+/** True when server history already contains this cached send (avoid duplicate bubbles). */
+export function userTurnPresentInHistory(entry, messages) {
+  if (!entry?.userMsg) return false;
+  const sig = outgoingSignature(entry.outgoing);
+  const text = typeof entry.userMsg.content === "string" ? entry.userMsg.content.trim() : "";
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (!isRealUserMessage(msg)) continue;
+    if (entry.userMsg.id && msg.id === entry.userMsg.id) return true;
+
+    const msgOutgoing = outgoingFromUserMessage(msg);
+    if (sig && outgoingSignature(msgOutgoing) === sig) return true;
+
+    if (text && typeof msg.content === "string" && msg.content.trim() === text) {
+      const hasBlocks = Boolean(msg.contentBlocks?.length);
+      const entryHasBlocks = Boolean(entry.userMsg.contentBlocks?.length);
+      if (hasBlocks === entryHasBlocks) return true;
+    }
+  }
+  return false;
+}
+
+export function topPendingUserTurn(cached) {
+  const stack = normalizeCachedStack(cached);
+  return stack.at(-1) ?? null;
+}
+
 export function mergeCachedUserTurn(cached, messages) {
-  const stack = cached?.stack?.length
-    ? [...cached.stack]
-    : cached?.userMsg
-      ? [{ userMsg: cached.userMsg, outgoing: cached.outgoing }]
-      : [];
+  const stack = normalizeCachedStack(cached);
   if (!stack.length) return messages;
 
   let out = [...messages];
-  for (let fi = out.length - 1; fi >= 0 && stack.length; fi--) {
+  const remaining = [...stack];
+
+  for (let fi = out.length - 1; fi >= 0 && remaining.length; fi--) {
     if (!isRegeneratableFailure(out[fi])) continue;
     const prev = fi > 0 ? out[fi - 1] : null;
     if (prev && isRealUserMessage(prev)) continue;
-    const entry = stack.pop();
+    const entry = remaining.pop();
     if (!entry?.userMsg) continue;
     out = [
       ...out.slice(0, fi),
@@ -138,6 +188,16 @@ export function mergeCachedUserTurn(cached, messages) {
       ...out.slice(fi),
     ];
   }
+
+  for (const entry of remaining) {
+    if (!entry?.userMsg) continue;
+    if (userTurnPresentInHistory(entry, out)) continue;
+    out = [
+      ...out,
+      { ...entry.userMsg, role: "user", type: "user_message", collapsed: false },
+    ];
+  }
+
   return out;
 }
 

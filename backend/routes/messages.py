@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from backend.config import get_letta_client, get_settings
 from backend.letta_lists import collect_sync_page
 from backend.schemas import HistoryResponse, SendMessageRequest, serialize
-from backend.sse import stream_events
+from backend.sse import inject_keepalive_chunks, stream_events
 
 router = APIRouter(prefix="/api/agents", tags=["messages"])
 
@@ -131,7 +131,7 @@ def send_message(
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
 
     return StreamingResponse(
-        stream_events(stream),
+        stream_events(inject_keepalive_chunks(stream)),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

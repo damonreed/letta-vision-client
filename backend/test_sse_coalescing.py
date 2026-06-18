@@ -1,9 +1,10 @@
 """Unit tests for SSE stream delta coalescing."""
 
 import json
+import time
 import unittest
 
-from backend.sse import StreamCoalescer, stream_events
+from backend.sse import StreamCoalescer, inject_keepalive_chunks, stream_events
 
 
 def _parse_sse(raw: str) -> dict:
@@ -158,6 +159,21 @@ class StreamCoalescerTests(unittest.TestCase):
         tool_events = [e for e in events if _parse_sse(e)["type"] == "tool_call"]
         self.assertEqual(len(tool_events), 1)
         self.assertEqual(_parse_sse(tool_events[0])["tool_call"]["arguments"], "abcd")
+
+    def test_inject_keepalive_chunks_emits_ping_during_gap(self):
+        def slow_chunks():
+            time.sleep(0.06)
+            yield {"message_type": "assistant_message", "id": "a1", "content": "hi"}
+
+        saw_ping = False
+        saw_content = False
+        for chunk in inject_keepalive_chunks(slow_chunks(), interval=0.025):
+            if chunk.get("message_type") == "ping":
+                saw_ping = True
+            if chunk.get("content") == "hi":
+                saw_content = True
+        self.assertTrue(saw_ping)
+        self.assertTrue(saw_content)
 
 
 if __name__ == "__main__":

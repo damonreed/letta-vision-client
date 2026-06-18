@@ -1,5 +1,7 @@
 import json
 import logging
+import queue
+import threading
 from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
@@ -235,6 +237,50 @@ def _sse_error_from_exception(exc: BaseException) -> str:
     if raw_upstream and raw_upstream != friendly:
         payload["upstream_error"] = raw_upstream
     return sse_event("error", payload)
+
+
+def inject_keepalive_chunks(chunks: Iterator[Any], interval: float = 15.0) -> Iterator[Any]:
+    """Yield upstream chunks and synthetic pings when the Letta client blocks for long tool runs."""
+    item_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+    reader_done = threading.Event()
+
+    def reader() -> None:
+        try:
+            for chunk in chunks:
+                item_queue.put(("data", chunk))
+        except Exception as exc:
+            item_queue.put(("error", exc))
+        finally:
+            reader_done.set()
+            item_queue.put(("end", None))
+
+    threading.Thread(target=reader, daemon=True).start()
+
+    while True:
+        try:
+            msg_type, data = item_queue.get(timeout=interval)
+        except queue.Empty:
+            if reader_done.is_set():
+                break
+            yield {"message_type": "ping"}
+            continue
+
+        if msg_type == "end":
+            break
+        if msg_type == "error":
+            raise data
+        yield data
+
+    while True:
+        try:
+            msg_type, data = item_queue.get_nowait()
+        except queue.Empty:
+            break
+        if msg_type == "end":
+            break
+        if msg_type == "error":
+            raise data
+        yield data
 
 
 def stream_events(chunks: Iterator[Any]) -> Iterator[str]:
