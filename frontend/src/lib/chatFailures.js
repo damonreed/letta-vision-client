@@ -169,7 +169,41 @@ export function topPendingUserTurn(cached) {
   return stack.at(-1) ?? null;
 }
 
-export function mergeCachedUserTurn(cached, messages) {
+function oldestNonSystemDate(messages) {
+  let oldest = null;
+  for (const msg of messages) {
+    if (msg.role === "system") continue;
+    const parsed = msg.date ? Date.parse(msg.date) : NaN;
+    if (Number.isNaN(parsed)) continue;
+    if (oldest === null || parsed < oldest) oldest = parsed;
+  }
+  return oldest;
+}
+
+/** Cached turn is probably persisted but not in the current history window yet. */
+function cachedTurnLikelyOnUnloadedServerPage(entry, messages, hasMore) {
+  if (!hasMore) return false;
+  const entryDate = entry.userMsg?.date ? Date.parse(entry.userMsg.date) : NaN;
+  if (Number.isNaN(entryDate)) return false;
+  const oldest = oldestNonSystemDate(messages);
+  if (oldest === null) return false;
+  return entryDate < oldest;
+}
+
+/** Drop local-only user bubbles when the server copy is already in the thread. */
+export function dropSupersededLocalUserBubbles(messages) {
+  const serverUsers = messages.filter(
+    (m) => isRealUserMessage(m) && !String(m.id).startsWith("local-")
+  );
+  if (!serverUsers.length) return messages;
+
+  return messages.filter((msg) => {
+    if (!isRealUserMessage(msg) || !String(msg.id).startsWith("local-")) return true;
+    return !userTurnPresentInHistory({ userMsg: msg }, serverUsers);
+  });
+}
+
+export function mergeCachedUserTurn(cached, messages, { hasMore = false } = {}) {
   const stack = normalizeCachedStack(cached);
   if (!stack.length) return messages;
 
@@ -182,6 +216,7 @@ export function mergeCachedUserTurn(cached, messages) {
     if (prev && isRealUserMessage(prev)) continue;
     const entry = remaining.pop();
     if (!entry?.userMsg) continue;
+    if (cachedTurnLikelyOnUnloadedServerPage(entry, out, hasMore)) continue;
     out = [
       ...out.slice(0, fi),
       { ...entry.userMsg, role: "user", type: "user_message", collapsed: false },
@@ -192,6 +227,7 @@ export function mergeCachedUserTurn(cached, messages) {
   for (const entry of remaining) {
     if (!entry?.userMsg) continue;
     if (userTurnPresentInHistory(entry, out)) continue;
+    if (cachedTurnLikelyOnUnloadedServerPage(entry, out, hasMore)) continue;
     out = [
       ...out,
       { ...entry.userMsg, role: "user", type: "user_message", collapsed: false },

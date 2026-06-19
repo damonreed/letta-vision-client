@@ -17,6 +17,7 @@
     topPendingUserTurn,
     userTurnPresentInHistory,
     mergeCachedUserTurn,
+    dropSupersededLocalUserBubbles,
     outgoingFromUserMessage,
     outgoingHasImage,
     unpackPackedFailure,
@@ -340,7 +341,10 @@
     let normalized = sortMessagesChronological(
       dedupeServerHistory(hist).map(normalizeMessage).filter(Boolean)
     );
-    normalized = mergeCachedUserTurn(loadUserTurn(id, convId), normalized);
+    normalized = mergeCachedUserTurn(loadUserTurn(id, convId), normalized, { hasMore });
+    normalized = sortMessagesChronological(
+      dropSupersededLocalUserBubbles(normalized)
+    );
     messages = filterDismissedMessages(
       withUniqueMessageIds(normalized),
       id,
@@ -369,11 +373,10 @@
       historyHasMore = hasMore;
       return false;
     }
-    messages = filterDismissedMessages(
-      withUniqueMessageIds([...older, ...messages]),
-      id,
-      convId
-    );
+    let combined = sortMessagesChronological([...older, ...messages]);
+    combined = mergeCachedUserTurn(loadUserTurn(id, convId), combined, { hasMore });
+    combined = sortMessagesChronological(dropSupersededLocalUserBubbles(combined));
+    messages = filterDismissedMessages(withUniqueMessageIds(combined), id, convId);
     historyHasMore = hasMore;
     return true;
   }
