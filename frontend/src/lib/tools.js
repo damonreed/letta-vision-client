@@ -79,6 +79,7 @@ export const TOOL_GROUPS = [
       "file_contents_search",
       "open_file",
       "close_file",
+      "files_list_open",
       "file_read_page",
       "file_read_next_page",
       "file_read_prev_page",
