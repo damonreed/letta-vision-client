@@ -44,12 +44,23 @@ def _default_summary(agent_id: str) -> ConversationSummary:
     return ConversationSummary(
         id=DEFAULT_CONVERSATION_ID,
         agent_id=agent_id,
-        name="Default conversation",
+        name="Default Chat",
         is_default=True,
         last_message_at=None,
         last_message_preview=None,
         created_at=None,
     )
+
+
+def _recency_ts(summary: ConversationSummary) -> float:
+    for raw in (summary.last_message_at, summary.created_at):
+        if not raw:
+            continue
+        try:
+            return datetime.fromisoformat(str(raw).replace("Z", "+00:00")).timestamp()
+        except (TypeError, ValueError):
+            continue
+    return 0.0
 
 
 @router.get("/agents/{agent_id}/conversations")
@@ -66,7 +77,9 @@ def list_conversations(agent_id: str):
     except Exception as e:
         raise HTTPException(status_code=400, detail={"error": str(e)}) from e
 
-    return [_to_summary(conv) for conv in items]
+    named = [_to_summary(conv) for conv in items]
+    named.sort(key=_recency_ts, reverse=True)
+    return named + [_default_summary(agent_id)]
 
 
 @router.post("/agents/{agent_id}/conversations")

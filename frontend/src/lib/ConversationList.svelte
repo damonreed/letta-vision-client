@@ -5,6 +5,7 @@
     conversations,
     pickConversationForAgent,
     saveActiveConversation,
+    sortConversationList,
   } from "./stores.js";
 
   /** @type {{ agentId: string | null }} */
@@ -34,7 +35,7 @@
   async function loadConversations(id) {
     error = "";
     try {
-      const list = await api.listConversations(id);
+      const list = sortConversationList(await api.listConversations(id));
       convList = list;
       conversations.set(list);
       const pick = pickConversationForAgent(id, list);
@@ -54,7 +55,7 @@
   }
 
   function displayName(conv) {
-    if (conv.is_default) return "Default conversation";
+    if (conv.is_default) return conv.name || "Default Chat";
     if (conv.name) return conv.name;
     if (conv.created_at) {
       try {
@@ -73,6 +74,11 @@
     } catch {
       return d;
     }
+  }
+
+  function onNewConversationSubmit(e) {
+    e.preventDefault();
+    void createConversation();
   }
 
   async function createConversation() {
@@ -221,17 +227,17 @@
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div class="modal-backdrop" role="presentation" onclick={() => (showNew = false)}>
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div class="mini-modal" role="dialog" onclick={(e) => e.stopPropagation()}>
+    <form class="mini-modal" role="dialog" onclick={(e) => e.stopPropagation()} onsubmit={onNewConversationSubmit}>
       <h3>New conversation</h3>
       <label>
         Name (optional)
         <input bind:value={newName} placeholder="Leave blank for timestamp" />
       </label>
       <div class="mini-actions">
-        <button onclick={createConversation}>Create</button>
-        <button class="muted" onclick={() => (showNew = false)}>Cancel</button>
+        <button type="submit">Create</button>
+        <button type="button" class="muted" onclick={() => (showNew = false)}>Cancel</button>
       </div>
-    </div>
+    </form>
   </div>
 {/if}
 

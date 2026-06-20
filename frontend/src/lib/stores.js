@@ -78,12 +78,31 @@ export function saveActiveConversation(agentId, conversationId) {
   localStorage.removeItem(legacyActiveConversationKey(agentId));
 }
 
+function conversationRecency(conv) {
+  for (const d of [conv?.last_message_at, conv?.created_at]) {
+    const t = d ? Date.parse(d) : NaN;
+    if (!Number.isNaN(t)) return t;
+  }
+  return 0;
+}
+
+/** Named conversations newest-first; default conversation pinned to the bottom. */
+export function sortConversationList(list) {
+  if (!list?.length) return [];
+  const defaults = list.filter((c) => c.is_default);
+  const named = list.filter((c) => !c.is_default);
+  named.sort((a, b) => conversationRecency(b) - conversationRecency(a));
+  return [...named, ...defaults];
+}
+
 /** Per-agent conversation: saved selection, else most recent in list, else default (agent-direct). */
 export function pickConversationForAgent(agentId, convList) {
   const saved = loadActiveConversation(agentId);
-  if (convList?.length) {
-    if (saved && convList.some((c) => c.id === saved)) return saved;
-    return convList[0].id;
+  const ordered = sortConversationList(convList);
+  if (ordered.length) {
+    if (saved && ordered.some((c) => c.id === saved)) return saved;
+    const firstNamed = ordered.find((c) => !c.is_default);
+    return firstNamed?.id ?? ordered[0].id;
   }
   return saved || DEFAULT_CONVERSATION_ID;
 }

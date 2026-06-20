@@ -169,6 +169,27 @@ export function topPendingUserTurn(cached) {
   return stack.at(-1) ?? null;
 }
 
+/** True when a cached send should stay in the composer (failed / in-flight), not history. */
+export function pendingTurnBelongsInComposer(entry, messages, { hasMore = false } = {}) {
+  if (!entry?.userMsg) return false;
+  if (userTurnPresentInHistory(entry, messages)) return false;
+  if (cachedTurnLikelyOnUnloadedServerPage(entry, messages, hasMore)) return false;
+  return true;
+}
+
+/** Drop cached sends already visible in history or persisted on unloaded pages. */
+export function pruneCachedUserTurns(cached, messages, { hasMore = false } = {}) {
+  const stack = normalizeCachedStack(cached);
+  if (!stack.length) return cached;
+
+  const remaining = stack.filter((entry) =>
+    pendingTurnBelongsInComposer(entry, messages, { hasMore })
+  );
+  if (remaining.length === stack.length) return cached;
+  if (!remaining.length) return null;
+  return { stack: remaining };
+}
+
 function oldestNonSystemDate(messages) {
   let oldest = null;
   for (const msg of messages) {
@@ -181,7 +202,7 @@ function oldestNonSystemDate(messages) {
 }
 
 /** Cached turn is probably persisted but not in the current history window yet. */
-function cachedTurnLikelyOnUnloadedServerPage(entry, messages, hasMore) {
+export function cachedTurnLikelyOnUnloadedServerPage(entry, messages, hasMore) {
   if (!hasMore) return false;
   const entryDate = entry.userMsg?.date ? Date.parse(entry.userMsg.date) : NaN;
   if (Number.isNaN(entryDate)) return false;

@@ -1,5 +1,7 @@
 /** Persist recent user sends locally when server history omits them after a failed step. */
 
+import { pruneCachedUserTurns } from "./chatFailures.js";
+
 const PREFIX = "letta-vision-client/last-user-turn:";
 
 function cacheKey(agentId, conversationId) {
@@ -31,19 +33,45 @@ export function saveUserTurn(agentId, conversationId, userMsg, outgoing) {
   }
 }
 
-export function commitUserTurnSuccess(agentId, conversationId) {
+function writeUserTurnStack(key, stack) {
+  if (!stack.length) {
+    localStorage.removeItem(key);
+    return;
+  }
+  localStorage.setItem(key, JSON.stringify({ stack: stack.slice(-12) }));
+}
+
+export function commitUserTurnSuccess(agentId, conversationId, messages = null, { hasMore = false } = {}) {
   const key = cacheKey(agentId, conversationId);
   if (!key || typeof localStorage === "undefined") return;
   try {
     const existing = loadUserTurn(agentId, conversationId);
-    const stack = normalizeStack(existing);
+    let stack = normalizeStack(existing);
     if (!stack.length) return;
+
     stack.pop();
-    if (stack.length) {
-      localStorage.setItem(key, JSON.stringify({ stack }));
-    } else {
-      localStorage.removeItem(key);
+    if (Array.isArray(messages) && messages.length) {
+      const pruned = pruneCachedUserTurns({ stack }, messages, { hasMore });
+      stack = pruned ? normalizeStack(pruned) : [];
     }
+    writeUserTurnStack(key, stack);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function pruneUserTurnCache(agentId, conversationId, messages, { hasMore = false } = {}) {
+  const key = cacheKey(agentId, conversationId);
+  if (!key || typeof localStorage === "undefined") return;
+  try {
+    const existing = loadUserTurn(agentId, conversationId);
+    const pruned = pruneCachedUserTurns(existing, messages, { hasMore });
+    if (pruned === existing) return;
+    if (!pruned) {
+      localStorage.removeItem(key);
+      return;
+    }
+    writeUserTurnStack(key, normalizeStack(pruned));
   } catch {
     /* ignore */
   }

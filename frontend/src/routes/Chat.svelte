@@ -15,12 +15,12 @@
     isRegeneratableFailure,
     isRealUserMessage,
     topPendingUserTurn,
-    userTurnPresentInHistory,
     mergeCachedUserTurn,
     dropSupersededLocalUserBubbles,
     outgoingFromUserMessage,
     outgoingHasImage,
     unpackPackedFailure,
+    pendingTurnBelongsInComposer,
   } from "../lib/chatFailures.js";
   import {
     dismissMessageId,
@@ -32,6 +32,7 @@
     commitUserTurnSuccess,
     loadUserTurn,
     saveUserTurn,
+    pruneUserTurnCache,
   } from "../lib/chatTurnCache.js";
   import {
     createStreamWatchdog,
@@ -351,6 +352,7 @@
       convId
     );
     historyHasMore = hasMore;
+    pruneUserTurnCache(id, convId, messages, { hasMore });
     refreshSystemContextFromMessages(messages);
   }
 
@@ -378,12 +380,13 @@
     combined = sortMessagesChronological(dropSupersededLocalUserBubbles(combined));
     messages = filterDismissedMessages(withUniqueMessageIds(combined), id, convId);
     historyHasMore = hasMore;
+    pruneUserTurnCache(id, convId, messages, { hasMore });
     return true;
   }
 
-  function restoreComposerFromPendingTurn(id, convId, hist) {
+  function restoreComposerFromPendingTurn(id, convId, hist, { hasMore = false } = {}) {
     const pending = topPendingUserTurn(loadUserTurn(id, convId));
-    if (!pending?.userMsg || userTurnPresentInHistory(pending, hist)) return false;
+    if (!pendingTurnBelongsInComposer(pending, hist, { hasMore })) return false;
     const text = typeof pending.userMsg.content === "string" ? pending.userMsg.content : "";
     input = text;
     saveChatDraft(id, convId, text);
@@ -415,7 +418,8 @@
       const restoredToComposer = restoreComposerFromPendingTurn(
         streamAgentId,
         streamConversationId,
-        messages
+        messages,
+        { hasMore: historyHasMore }
       );
       if (reason) {
         recoveryNotice = restoredToComposer
@@ -998,7 +1002,9 @@
             });
             await loadMemory(streamAgentId);
             if (!streamRecoveryReason && !streamHadFailure) {
-              commitUserTurnSuccess(streamAgentId, streamConversationId);
+              commitUserTurnSuccess(streamAgentId, streamConversationId, messages, {
+                hasMore: historyHasMore,
+              });
             }
           } catch {
             /* syncConversationFromServer sets error when needed */
