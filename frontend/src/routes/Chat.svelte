@@ -39,6 +39,8 @@
     isKeepaliveEvent,
     isTerminalStreamEvent,
     RECOVERY_MESSAGES,
+    formatSendError,
+    isConversationBusyError,
   } from "../lib/chatStreamRecovery.js";
   import { parseContent, imageSrcFromBlock, previewSrcForAttachment } from "../lib/contentBlocks.js";
   import {
@@ -110,6 +112,7 @@
   let viewerSrc = $state(null);
   let viewerOpen = $state(false);
   let fileInput = $state(null);
+  let composerInput = $state(null);
   let streamUserCancelled = false;
   let streamRecoveryReason = null;
   /** @type {ReturnType<typeof createStreamWatchdog> | null} */
@@ -398,7 +401,7 @@
   async function syncConversationFromServer(
     streamAgentId,
     streamConversationId,
-    { reason = null } = {}
+    { reason = null, keepError = false } = {}
   ) {
     if (!streamAgentId || !streamConversationId) return;
     try {
@@ -426,7 +429,7 @@
           ? `${reason} Your message was restored to the composer so you can send again.`
           : reason;
         error = "";
-      } else {
+      } else if (!keepError) {
         recoveryNotice = "";
         error = "";
       }
@@ -702,6 +705,11 @@
     };
   }
 
+  async function focusComposer() {
+    await tick();
+    requestAnimationFrame(() => composerInput?.focus());
+  }
+
   async function scrollToBottom() {
     await tick();
     requestAnimationFrame(() => {
@@ -837,6 +845,7 @@
     let streamPart = 0;
     let sawTerminal = false;
     let streamHadFailure = false;
+    let streamSendFailed = false;
 
     const watchdog = createStreamWatchdog({
       onStall: () => {
@@ -985,7 +994,12 @@
           streamRecoveryReason = RECOVERY_MESSAGES.cancel;
         }
       } else if (isCurrentStream(streamId)) {
-        error = err.message;
+        streamSendFailed = true;
+        error = formatSendError(err.message);
+        if (isConversationBusyError(err.message)) {
+          recoveryNotice =
+            "Your message was kept in the composer. Sending will work once the in-progress response completes.";
+        }
       }
     } finally {
       watchdog.stop();
@@ -999,9 +1013,10 @@
           try {
             await syncConversationFromServer(streamAgentId, streamConversationId, {
               reason: streamRecoveryReason,
+              keepError: streamSendFailed,
             });
             await loadMemory(streamAgentId);
-            if (!streamRecoveryReason && !streamHadFailure) {
+            if (!streamRecoveryReason && !streamHadFailure && !streamSendFailed) {
               commitUserTurnSuccess(streamAgentId, streamConversationId, messages, {
                 hasMore: historyHasMore,
               });
@@ -1187,7 +1202,7 @@
 
   <div class="chat-body">
     {#if dropOverlay}<div class="drop-overlay">Drop image to attach</div>{/if}
-    <ConversationList agentId={agentId} />
+    <ConversationList agentId={agentId} onCreated={focusComposer} />
     <div class="messages" bind:this={listEl} onscroll={onMessagesScroll} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
       {#if historyHasMore}
         <button
@@ -1289,6 +1304,7 @@
       >📎</button>
       <button type="button" class="attach-btn" disabled={streaming || !visionCapable} onclick={() => (showUrlAttach = !showUrlAttach)}>URL</button>
       <textarea
+        bind:this={composerInput}
         bind:value={input}
         onkeydown={onKeydown}
         onpaste={onPaste}

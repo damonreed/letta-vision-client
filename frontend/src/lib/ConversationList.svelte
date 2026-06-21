@@ -8,8 +8,8 @@
     sortConversationList,
   } from "./stores.js";
 
-  /** @type {{ agentId: string | null }} */
-  let { agentId = null } = $props();
+  /** @type {{ agentId: string | null, onCreated?: (conversationId: string) => void }} */
+  let { agentId = null, onCreated = null } = $props();
 
   let convList = $state([]);
   let activeId = $state(null);
@@ -90,6 +90,7 @@
       newName = "";
       await loadConversations(agentId);
       selectConversation(conv.id);
+      onCreated?.(conv.id);
     } catch (err) {
       error = err.message;
     }

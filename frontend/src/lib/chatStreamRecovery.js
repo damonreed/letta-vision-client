@@ -20,6 +20,26 @@ export function isTerminalStreamEvent(event) {
   return event?.type === "done" || event?.type === "error";
 }
 
+export function isConversationBusyError(message) {
+  return (
+    typeof message === "string" &&
+    (message.includes("ConversationBusyError") ||
+      message.includes("currently being processed for this conversation"))
+  );
+}
+
+/** Map upstream send failures to short UI copy. */
+export function formatSendError(message) {
+  if (!message || typeof message !== "string") return message || "Send failed";
+  if (isConversationBusyError(message)) {
+    return "The agent is still working on a previous message in this conversation. Wait for it to finish, then try again.";
+  }
+  if (message.startsWith("CONFLICT:")) {
+    return message.replace(/^CONFLICT:\s*/, "");
+  }
+  return message;
+}
+
 export function createStreamWatchdog({
   stallMs = DEFAULT_STREAM_STALL_MS,
   maxMs = DEFAULT_STREAM_MAX_MS,
