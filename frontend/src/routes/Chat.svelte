@@ -120,6 +120,7 @@
   let historyHasMore = $state(false);
   let loadingOlder = $state(false);
   let memoryLoadedFor = null;
+  let convListRefresh = $state(0);
 
   const HISTORY_PAGE_SIZE = 50;
 
@@ -1015,6 +1016,7 @@
               reason: streamRecoveryReason,
               keepError: streamSendFailed,
             });
+            convListRefresh++;
             await loadMemory(streamAgentId);
             if (!streamRecoveryReason && !streamHadFailure && !streamSendFailed) {
               commitUserTurnSuccess(streamAgentId, streamConversationId, messages, {
@@ -1202,7 +1204,7 @@
 
   <div class="chat-body">
     {#if dropOverlay}<div class="drop-overlay">Drop image to attach</div>{/if}
-    <ConversationList agentId={agentId} onCreated={focusComposer} />
+    <ConversationList agentId={agentId} listRefreshKey={convListRefresh} onCreated={focusComposer} />
     <div class="messages" bind:this={listEl} onscroll={onMessagesScroll} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
       {#if historyHasMore}
         <button

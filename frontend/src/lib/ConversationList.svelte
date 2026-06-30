@@ -1,4 +1,5 @@
 <script>
+  import { get } from "svelte/store";
   import { api } from "./api.js";
   import {
     activeConversationId,
@@ -8,11 +9,10 @@
     sortConversationList,
   } from "./stores.js";
 
-  /** @type {{ agentId: string | null, onCreated?: (conversationId: string) => void }} */
-  let { agentId = null, onCreated = null } = $props();
+  /** @type {{ agentId: string | null, listRefreshKey?: number, onCreated?: (conversationId: string) => void }} */
+  let { agentId = null, listRefreshKey = 0, onCreated = null } = $props();
 
   let convList = $state([]);
-  let activeId = $state(null);
   let error = $state("");
   let showNew = $state(false);
   let newName = $state("");
@@ -20,35 +20,48 @@
   let renameId = $state(null);
   let renameValue = $state("");
   let confirmDeleteId = $state(null);
+  let loadRequest = 0;
 
   $effect(() => {
+    void listRefreshKey;
     if (agentId) {
       loadConversations(agentId);
     } else {
       convList = [];
-      activeId = null;
       conversations.set([]);
       activeConversationId.set(null);
     }
   });
 
+  function upsertConversation(conv) {
+    const merged = sortConversationList([
+      conv,
+      ...convList.filter((c) => c.id !== conv.id),
+    ]);
+    convList = merged;
+    conversations.set(merged);
+  }
+
   async function loadConversations(id) {
+    const requestId = ++loadRequest;
     error = "";
     try {
       const list = sortConversationList(await api.listConversations(id));
+      if (requestId !== loadRequest) return;
       convList = list;
       conversations.set(list);
+      const current = get(activeConversationId);
       const pick = pickConversationForAgent(id, list);
-      if (!activeId || !list.some((c) => c.id === activeId)) {
+      if (!current || !list.some((c) => c.id === current)) {
         selectConversation(pick);
       }
     } catch (err) {
+      if (requestId !== loadRequest) return;
       error = err.message;
     }
   }
 
   function selectConversation(id) {
-    activeId = id;
     activeConversationId.set(id);
     if (agentId) saveActiveConversation(agentId, id);
     menuFor = null;
@@ -88,9 +101,10 @@
       const conv = await api.createConversation(agentId, newName.trim());
       showNew = false;
       newName = "";
-      await loadConversations(agentId);
+      upsertConversation(conv);
       selectConversation(conv.id);
       onCreated?.(conv.id);
+      await loadConversations(agentId);
     } catch (err) {
       error = err.message;
     }
@@ -113,8 +127,9 @@
     try {
       await api.deleteConversation(id);
       confirmDeleteId = null;
+      const wasActive = get(activeConversationId) === id;
       await loadConversations(agentId);
-      if (activeId === id) {
+      if (wasActive) {
         selectConversation(pickConversationForAgent(agentId, convList));
       }
     } catch (err) {
@@ -143,7 +158,7 @@
 
   <ul class="conv-list">
     {#each convList as conv (conv.id)}
-      <li class:selected={conv.id === activeId}>
+      <li class:selected={conv.id === $activeConversationId}>
         {#if renameId === conv.id}
           <div class="rename-row">
             <input bind:value={renameValue} />
