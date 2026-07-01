@@ -71,7 +71,8 @@ def list_conversations(agent_id: str):
             client.conversations.list(
                 agent_id=agent_id,
                 order="desc",
-                order_by="last_message_at",
+                order_by="created_at",
+                limit=200,
             )
         )
     except Exception as e:

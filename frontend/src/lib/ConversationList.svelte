@@ -42,18 +42,29 @@
     conversations.set(merged);
   }
 
+  function mergeServerList(serverList) {
+    const byId = new Map(serverList.map((c) => [c.id, c]));
+    const current = get(activeConversationId);
+    if (current && !byId.has(current)) {
+      const local = convList.find((c) => c.id === current);
+      if (local) byId.set(current, local);
+    }
+    return sortConversationList([...byId.values()]);
+  }
+
   async function loadConversations(id) {
     const requestId = ++loadRequest;
     error = "";
     try {
-      const list = sortConversationList(await api.listConversations(id));
+      const list = mergeServerList(
+        sortConversationList(await api.listConversations(id))
+      );
       if (requestId !== loadRequest) return;
       convList = list;
       conversations.set(list);
       const current = get(activeConversationId);
-      const pick = pickConversationForAgent(id, list);
-      if (!current || !list.some((c) => c.id === current)) {
-        selectConversation(pick);
+      if (!current) {
+        selectConversation(pickConversationForAgent(id, list));
       }
     } catch (err) {
       if (requestId !== loadRequest) return;

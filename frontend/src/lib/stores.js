@@ -99,8 +99,10 @@ export function sortConversationList(list) {
 export function pickConversationForAgent(agentId, convList) {
   const saved = loadActiveConversation(agentId);
   const ordered = sortConversationList(convList);
+  if (saved) {
+    if (!ordered.length || ordered.some((c) => c.id === saved)) return saved;
+  }
   if (ordered.length) {
-    if (saved && ordered.some((c) => c.id === saved)) return saved;
     const firstNamed = ordered.find((c) => !c.is_default);
     return firstNamed?.id ?? ordered[0].id;
   }
