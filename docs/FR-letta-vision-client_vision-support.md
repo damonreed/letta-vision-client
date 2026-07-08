@@ -32,7 +32,6 @@ v1 stretch goal (conditional on server-side investigation):
 Explicit non-goals for v1:
 
 - Video upload/display (Letta schema doesn't support it).
-- Multi-image selection in a single message turn (defer until single-image works cleanly).
 - Image annotation, cropping, or in-client editing.
 - Lazy fetching from `file_id` references (v2; v1 renders `source.data` inline).
 
@@ -70,6 +69,7 @@ Every image input mode produces the same shape via the same pipeline. The shape 
 | `imageJpegQuality` | `0.85` | JPEG encode quality |
 | `imagePreserveOriginal` | `false` | Skip downscale/re-encode, send raw |
 | `imageMaxUploadBytes` | `20971520` (20 MiB) | Reject inputs larger than this before any processing |
+| `maxAttachmentsPerMessage` | `4` | Maximum images in one outgoing message |
 
 Configuration lives in client settings (localStorage prefix `letta-vision-client/`). Per-message override via a toggle in the attachment UI: *"Send original resolution."*
 
@@ -90,11 +90,11 @@ An attachment button in the chat composer (paperclip icon or similar). Click ope
 
 The picker accepts: `image/jpeg`, `image/png`, `image/webp`, `image/gif`.
 
-Multiple selection is **disabled** in v1 — one image per message.
+Multiple selection is **enabled** — up to **4** images per message. Additional attach attempts show an error when the cap is reached.
 
 ### 4.2 Behavior
 
-Selected file flows through the pre-send pipeline (§3). A thumbnail appears in the composer above the text input, with a remove (×) button. The text input remains active — user can add a prompt alongside the image.
+Selected file flows through the pre-send pipeline (§3). Thumbnails appear in a horizontal strip above the text input (count badge `n/4`), each with a remove (×) button. The text input remains active — user can add a prompt alongside the images.
 
 **The thumbnail shows the post-pipeline (downscaled, re-encoded) image** — what will actually be sent, not the original. This gives the user a chance to notice if downscaling lost detail that matters before they hit send. Clicking the thumbnail opens it in the shared image viewer (§9.5) at the downscaled image's full resolution.
 
@@ -303,16 +303,16 @@ class MessageRequest(BaseModel):
 Apply an early-fail size check in the proxy before forwarding to Letta. The server enforces its own limits per the server FR — this guard prevents wasting bandwidth on requests that will be rejected.
 
 ```python
-MAX_REQUEST_BYTES = int(os.getenv("VISION_MAX_REQUEST_BYTES", 25 * 1024 * 1024))
+MAX_REQUEST_BYTES = int(os.getenv("VISION_MAX_REQUEST_BYTES", 80 * 1024 * 1024))
 ```
 
-Default 25 MiB (slightly above the per-image 20 MiB to allow for text + small overhead). Configurable, but never higher than the server's `LETTA_MAX_MESSAGE_BYTES`.
+Default 80 MiB (aligned with the server's `LETTA_MAX_MESSAGE_BYTES` for multi-image messages). Configurable, but never higher than the server's `LETTA_MAX_MESSAGE_BYTES`.
 
 ### 11.3 Acceptance Criteria
 
 - [ ] Sending a string content (existing flow) still works.
 - [ ] Sending a content block array proxies through to Letta without transformation.
-- [ ] Sending a request over 25 MiB returns 413 from the proxy without contacting Letta.
+- [ ] Sending a request over 80 MiB returns 413 from the proxy without contacting Letta.
 
 ---
 
@@ -393,7 +393,7 @@ No new npm dependencies expected — `createImageBitmap` and `OffscreenCanvas` a
 
 | Variable | Default | Required |
 |----------|---------|----------|
-| `VISION_MAX_REQUEST_BYTES` | `26214400` (25 MiB) | No |
+| `VISION_MAX_REQUEST_BYTES` | `83886080` (80 MiB) | No |
 | `VISION_MAX_UPLOAD_BYTES` | (unchanged, default `0` = unlimited) | No — but operators should set this to ~20 MiB |
 
 Client-side localStorage settings (no env var):
@@ -448,7 +448,6 @@ Add to `stress-tests/`:
 - §12, §13 — stretch, ship if server-side work clears the path
 
 **v2 (separate FR):**
-- Multi-image messages
 - Lazy fetch via `file_id` references (paired with server v2)
 - Inline image annotation / crop / mark
 - Image search across history

@@ -47,8 +47,10 @@
     buildMessageContent,
     fileToImageBlock,
     fetchUrlToImageBlock,
+    MAX_ATTACHMENTS,
+    validateOutgoingSize,
   } from "../lib/imagePipeline.ts";
-  import AttachmentThumbnail from "../lib/components/AttachmentThumbnail.svelte";
+  import AttachmentStrip from "../lib/components/AttachmentStrip.svelte";
   import ImageViewer from "../lib/components/ImageViewer.svelte";
   import {
     extractToolName,
@@ -104,7 +106,8 @@
   /** @type {{ abort: AbortController, agentId: string, conversationId: string, streamId: number, lifecycleDone: Promise<void> } | null} */
   let activeStream = null;
   let streamIdCounter = 0;
-  let pendingAttachment = $state(null);
+  let pendingAttachments = $state([]);
+  let attachingCount = $state(0);
   let modelsList = $state([]);
   let showUrlAttach = $state(false);
   let urlAttachInput = $state("");
@@ -394,8 +397,8 @@
     const text = typeof pending.userMsg.content === "string" ? pending.userMsg.content : "";
     input = text;
     saveChatDraft(id, convId, text);
-    const imageBlock = pending.userMsg.contentBlocks?.find((b) => b?.type === "image");
-    pendingAttachment = imageBlock || null;
+    const imageBlocks = pending.userMsg.contentBlocks?.filter((b) => b?.type === "image") || [];
+    pendingAttachments = imageBlocks;
     return true;
   }
 
@@ -740,23 +743,63 @@
     viewerOpen = true;
   }
 
+  function atAttachmentCap() {
+    return pendingAttachments.length + attachingCount >= MAX_ATTACHMENTS;
+  }
+
   async function attachFile(file) {
     if (!file || !file.type.startsWith("image/")) {
       error = "Only image files can be attached.";
-      return;
+      return false;
     }
-    error = "";
+    if (atAttachmentCap()) {
+      error = `Maximum ${MAX_ATTACHMENTS} images per message.`;
+      return false;
+    }
+    attachingCount += 1;
     try {
-      pendingAttachment = await fileToImageBlock(file);
+      const block = await fileToImageBlock(file);
+      if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+        error = `Maximum ${MAX_ATTACHMENTS} images per message.`;
+        return false;
+      }
+      pendingAttachments = [...pendingAttachments, block];
+      return true;
     } catch (err) {
       error = err.message;
+      return false;
+    } finally {
+      attachingCount -= 1;
+    }
+  }
+
+  async function attachFiles(files) {
+    const imageFiles = Array.from(files || []).filter((f) => f?.type?.startsWith("image/"));
+    if (!imageFiles.length) {
+      if (files?.length) error = "Only image files can be attached.";
+      return;
+    }
+    const slots = MAX_ATTACHMENTS - pendingAttachments.length - attachingCount;
+    if (slots <= 0) {
+      error = `Maximum ${MAX_ATTACHMENTS} images per message.`;
+      return;
+    }
+    const toAttach = imageFiles.slice(0, slots);
+    if (imageFiles.length > slots) {
+      error = `Only ${MAX_ATTACHMENTS} images allowed; attaching ${toAttach.length}.`;
+    } else {
+      error = "";
+    }
+    for (const file of toAttach) {
+      const ok = await attachFile(file);
+      if (!ok && atAttachmentCap()) break;
     }
   }
 
   function onFilePick(e) {
-    const file = e.target.files?.[0];
+    const files = e.target.files;
     e.target.value = "";
-    if (file) attachFile(file);
+    if (files?.length) attachFiles(files);
   }
 
   function onDragOver(e) {
@@ -771,45 +814,55 @@
   async function onDrop(e) {
     e.preventDefault();
     dropOverlay = false;
-    const file = e.dataTransfer?.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      error = "Only image files can be attached.";
-      return;
-    }
-    await attachFile(file);
+    const files = e.dataTransfer?.files;
+    if (!files?.length) return;
+    await attachFiles(files);
   }
 
   async function onPaste(e) {
     const items = e.clipboardData?.items;
     if (!items) return;
+    const imageFiles = [];
     for (const item of items) {
       if (item.type.startsWith("image/")) {
-        e.preventDefault();
         const file = item.getAsFile();
-        if (file) await attachFile(file);
-        return;
+        if (file) imageFiles.push(file);
       }
     }
+    if (!imageFiles.length) return;
+    e.preventDefault();
+    await attachFiles(imageFiles);
   }
 
   async function attachFromUrl() {
     const url = urlAttachInput.trim();
     if (!url) return;
+    if (atAttachmentCap()) {
+      error = `Maximum ${MAX_ATTACHMENTS} images per message.`;
+      return;
+    }
     error = "";
+    attachingCount += 1;
     try {
-      pendingAttachment = await fetchUrlToImageBlock(url);
+      const block = await fetchUrlToImageBlock(url);
+      if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+        error = `Maximum ${MAX_ATTACHMENTS} images per message.`;
+        return;
+      }
+      pendingAttachments = [...pendingAttachments, block];
       showUrlAttach = false;
       urlAttachInput = "";
     } catch (err) {
       error = err.message.includes("fetch")
         ? err.message
         : `Could not attach image: ${err.message}`;
+    } finally {
+      attachingCount -= 1;
     }
   }
 
-  function clearAttachment() {
-    pendingAttachment = null;
+  function removeAttachment(index) {
+    pendingAttachments = pendingAttachments.filter((_, i) => i !== index);
   }
 
   async function runMessageStream(outgoing, { appendUserBubble = false, userBubble = null } = {}) {
@@ -1035,10 +1088,19 @@
 
   async function send() {
     const text = input.trim();
-    const attachment = pendingAttachment;
-    if ((!text && !attachment) || !agentId || streaming) return;
-    if (attachment && !visionCapable) {
+    const attachments = pendingAttachments;
+    if ((!text && !attachments.length) || !agentId || streaming) return;
+    if (attachments.length && !visionCapable) {
       error = "This agent's model can't see images. Switch to a vision-capable agent.";
+      return;
+    }
+
+    let outgoing;
+    try {
+      outgoing = buildMessageContent(text, attachments);
+      validateOutgoingSize(outgoing);
+    } catch (err) {
+      error = err.message;
       return;
     }
 
@@ -1047,7 +1109,6 @@
     input = "";
     saveChatDraft(streamAgentId, streamConversationId, "");
 
-    const outgoing = buildMessageContent(text, attachment);
     const userMsg = {
       id: `local-${Date.now()}`,
       role: "user",
@@ -1057,7 +1118,7 @@
       date: new Date().toISOString(),
       collapsed: false,
     };
-    pendingAttachment = null;
+    pendingAttachments = [];
     saveUserTurn(streamAgentId, streamConversationId, userMsg, outgoing);
 
     await runMessageStream(outgoing, { appendUserBubble: true, userBubble: userMsg });
@@ -1203,7 +1264,7 @@
   {/if}
 
   <div class="chat-body">
-    {#if dropOverlay}<div class="drop-overlay">Drop image to attach</div>{/if}
+    {#if dropOverlay}<div class="drop-overlay">Drop images to attach</div>{/if}
     <ConversationList agentId={agentId} listRefreshKey={convListRefresh} onCreated={focusComposer} />
     <div class="messages" bind:this={listEl} onscroll={onMessagesScroll} ondragover={onDragOver} ondragleave={onDragLeave} ondrop={onDrop}>
       {#if historyHasMore}
@@ -1281,14 +1342,15 @@
   </div>
 
   <footer class="input-area">
-    <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden bind:this={fileInput} onchange={onFilePick} />
-    {#if pendingAttachment}
-      <AttachmentThumbnail
-        src={previewSrcForAttachment(pendingAttachment)}
-        onRemove={clearAttachment}
-        onView={() => openViewer(previewSrcForAttachment(pendingAttachment))}
-      />
-    {/if}
+    <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple hidden bind:this={fileInput} onchange={onFilePick} />
+    <AttachmentStrip
+      attachments={pendingAttachments}
+      maxAttachments={MAX_ATTACHMENTS}
+      loadingCount={attachingCount}
+      previewSrc={previewSrcForAttachment}
+      onRemove={removeAttachment}
+      onView={(attachment) => openViewer(previewSrcForAttachment(attachment))}
+    />
     {#if showUrlAttach}
       <div class="url-attach">
         <input type="url" bind:value={urlAttachInput} placeholder="Image URL" />
@@ -1300,11 +1362,20 @@
       <button
         type="button"
         class="attach-btn"
-        title={visionCapable ? "Attach image" : "This agent's model can't see images. Switch to a vision-capable agent."}
-        disabled={streaming || !visionCapable}
+        title={visionCapable
+          ? atAttachmentCap()
+            ? `Maximum ${MAX_ATTACHMENTS} images per message`
+            : "Attach image"
+          : "This agent's model can't see images. Switch to a vision-capable agent."}
+        disabled={streaming || !visionCapable || atAttachmentCap()}
         onclick={() => fileInput?.click()}
       >📎</button>
-      <button type="button" class="attach-btn" disabled={streaming || !visionCapable} onclick={() => (showUrlAttach = !showUrlAttach)}>URL</button>
+      <button
+        type="button"
+        class="attach-btn"
+        disabled={streaming || !visionCapable || atAttachmentCap()}
+        onclick={() => (showUrlAttach = !showUrlAttach)}
+      >URL</button>
       <textarea
         bind:this={composerInput}
         bind:value={input}
@@ -1314,7 +1385,7 @@
         rows="2"
         disabled={streaming}
       ></textarea>
-      <button onclick={send} disabled={streaming || (!input.trim() && !pendingAttachment)}>
+      <button onclick={send} disabled={streaming || (!input.trim() && !pendingAttachments.length)}>
         {streaming ? "Sending…" : "Send"}
       </button>
     </div>

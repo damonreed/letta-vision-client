@@ -5,6 +5,9 @@ export type ImageBlock = {
   source: { type: "base64"; media_type: string; data: string };
 };
 
+export const MAX_ATTACHMENTS = 4;
+export const DEFAULT_MAX_REQUEST_BYTES = 80 * 1024 * 1024;
+
 const LS_PREFIX = "letta-vision-client/";
 const DEFAULT_MAX_EDGE = 1920;
 const DEFAULT_JPEG_QUALITY = 0.85;
@@ -102,12 +105,39 @@ export function imageBlockDataUrl(block: ImageBlock): string {
   return `data:${media_type};base64,${data}`;
 }
 
-export function buildMessageContent(text: string, imageBlock: ImageBlock | null): string | object[] {
+function normalizeImageBlocks(imageBlocks: ImageBlock | ImageBlock[] | null | undefined): ImageBlock[] {
+  if (!imageBlocks) return [];
+  return Array.isArray(imageBlocks) ? imageBlocks : [imageBlocks];
+}
+
+export function buildMessageContent(
+  text: string,
+  imageBlocks: ImageBlock | ImageBlock[] | null | undefined
+): string | object[] {
   const parts: object[] = [];
   const trimmed = text.trim();
   if (trimmed) parts.push({ type: "text", text: trimmed });
-  if (imageBlock) parts.push(imageBlock);
+  for (const block of normalizeImageBlocks(imageBlocks)) {
+    parts.push(block);
+  }
   if (parts.length === 0) return "";
   if (parts.length === 1 && parts[0].type === "text") return trimmed;
   return parts;
+}
+
+/** Estimate serialized POST body size for { content: outgoing }. */
+export function estimateOutgoingJsonBytes(content: string | object[]): number {
+  return new TextEncoder().encode(JSON.stringify({ content })).length;
+}
+
+export function validateOutgoingSize(
+  content: string | object[],
+  maxBytes: number = DEFAULT_MAX_REQUEST_BYTES
+): void {
+  const size = estimateOutgoingJsonBytes(content);
+  if (size > maxBytes) {
+    throw new Error(
+      `Message is too large (${Math.round(size / 1024 / 1024)} MiB; max ${Math.round(maxBytes / 1024 / 1024)} MiB). Try fewer images or smaller files.`
+    );
+  }
 }

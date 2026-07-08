@@ -62,7 +62,7 @@ In **[letta-vision-deploy](https://github.com/damonreed/letta-vision-deploy)**, 
 | `LETTA_BASE_URL` | `http://letta-vision:8283` | Letta server URL (Compose service name or localhost) |
 | `LETTA_SERVER_PASSWORD` | *(required)* | Letta server password / API key |
 | `VISION_MAX_UPLOAD_BYTES` | `0` | Max folder upload size in bytes (`0` = unlimited) |
-| `VISION_MAX_REQUEST_BYTES` | `26214400` | Max chat message request body in bytes (25 MiB) |
+| `VISION_MAX_REQUEST_BYTES` | `83886080` | Max chat message request body in bytes (80 MiB) |
 
 No auth between the browser and the vision client — intended for trusted local/LAN use. Harden with firewall rules or a reverse proxy (TLS, basic auth, VPN), not by exposing port 8284 publicly.
 
@@ -129,7 +129,7 @@ MCP servers are **org-scoped** in Letta. Agents do not connect to servers direct
 - **Outbound shape:** `POST /api/agents/{id}/messages` accepts `content` as a string or an array of `{type: text|image}` blocks (proxied to Letta `input`).
 - **Capability UI:** `GET /api/models` exposes `supports_vision`; attach controls are disabled for text-only agents; Agents list shows a Vision badge.
 - **Rendering:** History and optimistic sends render image blocks via `contentBlocks.js` + `ImageViewer.svelte` (never raw base64 text).
-- **Limits:** `VISION_MAX_REQUEST_BYTES` (default 25 MiB) on the proxy; server enforces per-image and per-message caps.
+- **Limits:** `VISION_MAX_REQUEST_BYTES` (default 80 MiB) on the proxy; up to 4 images per message in the composer; server enforces per-image and per-message caps.
 
 ## Docker
 
