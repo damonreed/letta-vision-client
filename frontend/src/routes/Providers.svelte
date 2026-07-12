@@ -186,7 +186,7 @@
   }
 
   async function refreshModels() {
-    if (!selectedId || isBaseProvider(selected)) return;
+    if (!selectedId) return;
     refreshing = true;
     error = "";
     try {
@@ -320,10 +320,10 @@
           <button disabled={checking} onclick={runCheck}>
             {checking ? "Checking…" : "Test connection"}
           </button>
+          <button disabled={refreshing} onclick={refreshModels}>
+            {refreshing ? "Refreshing…" : "Refresh models"}
+          </button>
           {#if !isBaseProvider(selected)}
-            <button disabled={refreshing} onclick={refreshModels}>
-              {refreshing ? "Refreshing…" : "Refresh models"}
-            </button>
             <button class="muted" onclick={openEdit}>Edit</button>
           {/if}
         </div>
