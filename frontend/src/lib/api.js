@@ -71,6 +71,18 @@ export const api = {
   deleteConversation: (conversationId) =>
     request(`/conversations/${conversationId}`, { method: "DELETE" }),
 
+  /** Cancel active server runs for a conversation (releases the busy lock). */
+  cancelConversation: (conversationId, agentId = null) => {
+    const params = new URLSearchParams();
+    if (conversationId === "default" && agentId) {
+      params.set("agent_id", agentId);
+    }
+    const qs = params.toString();
+    return request(`/conversations/${conversationId}/cancel${qs ? `?${qs}` : ""}`, {
+      method: "POST",
+    });
+  },
+
   recompileContext: (agentId, conversationId) =>
     request(
       `/agents/${agentId}/conversations/${encodeURIComponent(conversationId)}/recompile-context`,

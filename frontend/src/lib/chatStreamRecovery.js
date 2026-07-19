@@ -1,6 +1,9 @@
 /** Detect stalled SSE streams and surface recovery reasons for the chat UI. */
 
-export const DEFAULT_STREAM_STALL_MS = 90_000;
+// Image MCP tools can take ~3 minutes with no assistant tokens; keepalives
+// normally reset this, but leave headroom so a missed ping doesn't cancel a
+// still-running generate_image (stall recovery now cancels the server run).
+export const DEFAULT_STREAM_STALL_MS = 240_000;
 export const DEFAULT_STREAM_MAX_MS = 600_000;
 export const STALL_CHECK_INTERVAL_MS = 5_000;
 export const RECOVERY_MESSAGES = {
@@ -32,7 +35,7 @@ export function isConversationBusyError(message) {
 export function formatSendError(message) {
   if (!message || typeof message !== "string") return message || "Send failed";
   if (isConversationBusyError(message)) {
-    return "The agent is still working on a previous message in this conversation. Wait for it to finish, then try again.";
+    return "The agent is still working on a previous message in this conversation. Wait for it to finish, or Refresh chat to cancel it and unlock.";
   }
   if (message.startsWith("CONFLICT:")) {
     return message.replace(/^CONFLICT:\s*/, "");

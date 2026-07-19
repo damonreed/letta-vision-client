@@ -124,6 +124,36 @@ def recompile_conversation_context(agent_id: str, conversation_id: str):
     return {"content": content}
 
 
+@router.post("/conversations/{conversation_id}/cancel")
+def cancel_conversation(
+    conversation_id: str,
+    agent_id: str | None = None,
+):
+    """Cancel active runs for a conversation (unlocks ConversationBusyError)."""
+    client = get_letta_client()
+    try:
+        if conversation_id == DEFAULT_CONVERSATION_ID:
+            if not agent_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"error": "agent_id is required to cancel the default conversation"},
+                )
+            result = client.conversations.cancel(
+                DEFAULT_CONVERSATION_ID, agent_id=agent_id
+            )
+        else:
+            result = client.conversations.cancel(conversation_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        msg = str(e)
+        # Already idle — treat as success so Refresh/Cancel can finish unlocking the UI.
+        if "No active runs to cancel" in msg:
+            return {"ok": True, "cancelled": {}}
+        raise HTTPException(status_code=400, detail={"error": msg}) from e
+    return {"ok": True, "cancelled": serialize(result) if result is not None else {}}
+
+
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(conversation_id: str):
     if conversation_id == DEFAULT_CONVERSATION_ID:

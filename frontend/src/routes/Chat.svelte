@@ -449,20 +449,46 @@
     }
   }
 
+  async function cancelServerRun(agent = agentId, conv = conversationId) {
+    if (!agent || !conv) return;
+    try {
+      await api.cancelConversation(conv, agent);
+    } catch {
+      /* Best-effort unlock — sync still runs afterward. */
+    }
+  }
+
   async function recoverChat(reason = RECOVERY_MESSAGES.manual) {
     const isManual = reason === RECOVERY_MESSAGES.manual;
     const notifyReason = isManual ? null : reason;
+    const unlockBusy = isManual && isConversationBusyError(error);
 
     if (activeStream) {
       streamRecoveryReason = notifyReason;
       const lifecycleDone = activeStream.lifecycleDone;
+      const streamAgent = activeStream.agentId || agentId;
+      const streamConv = activeStream.conversationId || conversationId;
       activeStream.abort.abort();
+      // Abort alone leaves the server run holding the conversation lock.
+      // Cancel on deliberate recovery paths — not on brief online blips.
+      if (
+        isManual ||
+        reason === RECOVERY_MESSAGES.stall ||
+        reason === RECOVERY_MESSAGES.maxDuration ||
+        reason === RECOVERY_MESSAGES.cancel ||
+        reason === RECOVERY_MESSAGES.abrupt
+      ) {
+        await cancelServerRun(streamAgent, streamConv);
+      }
       if (lifecycleDone) {
         await lifecycleDone;
       }
       return;
     }
     stopActiveStream();
+    if (unlockBusy) {
+      await cancelServerRun(agentId, conversationId);
+    }
     if (agentId && conversationId) {
       await syncConversationFromServer(agentId, conversationId, { reason: notifyReason });
       if (showMemory) await ensureMemoryLoaded(agentId);
@@ -473,7 +499,10 @@
     if (!activeStream || !streaming) return;
     streamUserCancelled = true;
     streamRecoveryReason = RECOVERY_MESSAGES.cancel;
+    const streamAgent = activeStream.agentId || agentId;
+    const streamConv = activeStream.conversationId || conversationId;
     activeStream.abort.abort();
+    void cancelServerRun(streamAgent, streamConv);
   }
 
   async function loadHistory(id, convId = conversationId) {
@@ -1052,7 +1081,7 @@
         error = formatSendError(err.message);
         if (isConversationBusyError(err.message)) {
           recoveryNotice =
-            "Your message was kept in the composer. Sending will work once the in-progress response completes.";
+            "Your message was kept in the composer. Wait for the agent to finish, or Refresh chat to cancel the stuck run and unlock.";
         }
       }
     } finally {
@@ -1064,6 +1093,15 @@
         if (isCurrentStream(streamId)) {
           activeStream = null;
           streaming = false;
+          // Client abort (stall / max duration / Cancel) leaves the server run
+          // holding the conversation lock unless we cancel it explicitly.
+          if (
+            streamRecoveryReason === RECOVERY_MESSAGES.stall ||
+            streamRecoveryReason === RECOVERY_MESSAGES.maxDuration ||
+            streamRecoveryReason === RECOVERY_MESSAGES.cancel
+          ) {
+            await cancelServerRun(streamAgentId, streamConversationId);
+          }
           try {
             await syncConversationFromServer(streamAgentId, streamConversationId, {
               reason: streamRecoveryReason,
